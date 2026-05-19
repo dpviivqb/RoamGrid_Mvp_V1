@@ -8,21 +8,50 @@ import { formatDistance, formatDuration, formatPercentage } from "@/lib/format";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
 import { formatPlaceLabel } from "@/lib/mapbox";
 import { buildShareCardImage } from "@/lib/share-card";
-import { getLastResult } from "@/lib/storage";
+import { saveResultToSupabase } from "@/lib/supabase";
+import { getLastResult, saveLastResult } from "@/lib/storage";
 import type { ExplorationResult } from "@/lib/types";
 
 export function ResultView() {
   const router = useRouter();
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const hasAttemptedSyncRef = useRef(false);
   const [result, setResult] = useState<ExplorationResult | null>(null);
   const [language, setLanguage] = useState<Language>("en");
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     setLanguage(getInitialLanguage());
     setResult(getLastResult());
   }, []);
+
+  useEffect(() => {
+    if (!result || result.supabaseSyncedAt || hasAttemptedSyncRef.current) {
+      return;
+    }
+
+    hasAttemptedSyncRef.current = true;
+    setIsSyncing(true);
+
+    void saveResultToSupabase(result)
+      .then((syncResult) => {
+        const nextResult = syncResult.ok
+          ? {
+              ...result,
+              supabaseSyncedAt: syncResult.syncedAt,
+              supabaseSyncError: undefined
+            }
+          : { ...result, supabaseSyncError: syncResult.error };
+
+        saveLastResult(nextResult);
+        setResult(nextResult);
+      })
+      .finally(() => {
+        setIsSyncing(false);
+      });
+  }, [result]);
 
   function handleLanguageChange(nextLanguage: Language) {
     setLanguage(nextLanguage);
@@ -131,6 +160,11 @@ export function ResultView() {
             </button>
           </div>
           {downloadError ? <p className="mt-3 text-sm text-rose-200">{downloadError}</p> : null}
+          {isSyncing ? (
+            <p className="mt-3 text-sm font-semibold text-teal-200">
+              {t(language, "supabaseSyncing")}
+            </p>
+          ) : null}
           {result.supabaseSyncError ? (
             <p className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
               {t(language, "supabaseSyncFailed", { error: result.supabaseSyncError })}

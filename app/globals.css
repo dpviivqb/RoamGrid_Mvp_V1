@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  background: #06080f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.18), transparent 28rem),
+    linear-gradient(135deg, #05070d 0%, #10141f 50%, #17120d 100%);
+  color: #f8fafc;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mapboxgl-ctrl-logo,
+.mapboxgl-ctrl-attrib {
+  opacity: 0.65;
+}
+
+@keyframes territory-flash {
+  0% {
+    background: radial-gradient(circle at center, rgba(45, 212, 191, 0.28), transparent 18rem);
+    opacity: 0;
+  }
+
+  25% {
+    opacity: 1;
+  }
+
+  100% {
+    background: radial-gradient(circle at center, rgba(45, 212, 191, 0), transparent 34rem);
+    opacity: 0;
+  }
+}
+
+.animate-territory-flash {
+  animation: territory-flash 1.4s ease-out forwards;
+}
+
+@keyframes player-ping {
+  0% {
+    opacity: 0.75;
+    transform: scale(0.55);
+  }
+
+  75%,
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+.animate-player-ping {
+  animation: player-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.roamgrid-marker {
+  height: 32px;
+  pointer-events: none;
+  position: relative;
+  width: 32px;
+}
+
+.roamgrid-marker-ring {
+  animation: player-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+  background: rgba(56, 189, 248, 0.2);
+  border: 1px solid rgba(186, 230, 253, 0.8);
+  border-radius: 9999px;
+  inset: 0;
+  position: absolute;
+}
+
+.roamgrid-marker-core {
+  background: #7dd3fc;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  box-shadow: 0 0 24px rgba(56, 189, 248, 0.95);
+  height: 16px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+}

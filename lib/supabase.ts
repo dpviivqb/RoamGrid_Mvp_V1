@@ -18,7 +18,7 @@ export async function saveResultToSupabase(result: ExplorationResult) {
     return;
   }
 
-  const { error: sessionError } = await supabase.from("exploration_sessions").upsert({
+  const { error: sessionError } = await supabase.from("exploration_sessions").insert({
     id: result.id,
     anonymous_id: result.anonymousId,
     started_at: result.startedAt,
@@ -72,7 +72,7 @@ async function saveGrids(
   }
 
   const discoveredAt = new Date().toISOString();
-  const { error } = await supabase.from("discovered_grids").upsert(
+  const { error } = await supabase.from("discovered_grids").insert(
     gridIds.map((gridId) => ({
       id: crypto.randomUUID(),
       anonymous_id: anonymousId,

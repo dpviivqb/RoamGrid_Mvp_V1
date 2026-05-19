@@ -72,3 +72,24 @@ create table discovered_grids (
 ## Phone Location Testing
 
 Geolocation generally requires HTTPS or localhost. To test from a phone, expose the local dev server through a trusted tunnel, then open `/explore` on the phone and allow location access.
+
+## Vercel Field Test Deployment
+
+Use the GitHub integration for the first outdoor MVP test:
+
+1. Push `main` to `git@github.com:dpviivqb/RoamGrid_Mvp_V1.git`.
+2. In Vercel, import the GitHub repository as a new project.
+3. Keep the framework preset as `Next.js`, root directory as the repository root, build command as `npm run build`, install command as `npm install`, and output settings as the Vercel default.
+4. Add these environment variables to both Production and Preview:
+
+```bash
+NEXT_PUBLIC_MAPBOX_TOKEN=your_mapbox_public_token
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+5. If the Mapbox token uses URL restrictions, allow the production Vercel domain and any Preview domains you plan to test.
+6. In Supabase SQL Editor, run `supabase/roamgrid_field_test.sql` before the phone test.
+7. Redeploy in Vercel after changing any environment variable.
+
+For the phone test, open the production HTTPS URL at `/explore`, allow browser location permission, walk outdoors for at least 200-300 meters, finish the session, then verify `/result` and the three Supabase tables contain the run data.

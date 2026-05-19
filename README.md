@@ -26,7 +26,7 @@ Add a Mapbox public token to `.env.local`:
 NEXT_PUBLIC_MAPBOX_TOKEN=your_mapbox_token
 ```
 
-Supabase is optional. When these values are present, finished sessions are synced in addition to localStorage:
+Supabase is optional for anonymous field tests. When these values are present, finished sessions are synced in addition to localStorage, and Supabase Auth enables cross-device history:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
@@ -37,46 +37,29 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 
 ## Supabase Tables
 
-```sql
-create table exploration_sessions (
-  id uuid primary key,
-  anonymous_id text,
-  started_at timestamptz,
-  ended_at timestamptz,
-  city_name text,
-  distance_meters float,
-  discovered_grid_count int,
-  exploration_percentage float
-);
+Run `supabase/roamgrid_field_test.sql` in the Supabase SQL Editor. It creates the session, point, and grid tables; adds `user_id` for authenticated history; and installs RLS policies.
 
-create table location_points (
-  id uuid primary key,
-  session_id uuid,
-  lat float,
-  lng float,
-  timestamp timestamptz
-);
+For email/password login, enable the Supabase Email provider. For MVP field testing, email confirmation can stay disabled. Add these redirect URLs for password reset:
 
-create table discovered_grids (
-  id uuid primary key,
-  anonymous_id text,
-  grid_id text,
-  discovered_at timestamptz
-);
-```
+- `https://your-production-domain/auth/update-password`
+- `http://localhost:3000/auth/update-password`
 
 ## Pages
 
 - `/` home page
 - `/explore` real-time map exploration
 - `/result` session summary and share card
+- `/auth` email/password login, registration, and password reset request
+- `/auth/update-password` password reset landing page
+- `/history` synced exploration history for logged-in users
 
 ## Grid Behavior
 
 - Exploration uses fixed global 100m grid IDs with the `g100:x:y` format.
 - Exploration only counts grids inside a supported real administrative boundary. The current MVP ships China ADM3 district/county GIS data from geoBoundaries `gbOpen`.
 - Finished sessions merge newly discovered grid IDs into `localStorage` under `roamgrid_admin_grid_history_v1`, grouped by administrative area.
-- `/explore` reads local history for the matched district/county and renders previously discovered blocks. Anonymous history is device/browser-local unless a login flow is added later.
+- `/explore` reads local history for the matched district/county and renders previously discovered blocks. Logged-in users also read their Supabase grid history for the current administrative area.
+- Login automatically uploads local administrative grid history to Supabase once per user, using `(user_id, admin_area_id, grid_id)` for de-duplication.
 - Refresh GIS data with `npm run import:gis`.
 
 ## Phone Location Testing

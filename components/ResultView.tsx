@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AccountMenu } from "@/components/AccountMenu";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { formatDistance, formatDuration, formatPercentage } from "@/lib/format";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
@@ -40,6 +41,8 @@ export function ResultView() {
         const nextResult = syncResult.ok
           ? {
               ...result,
+              userId: syncResult.userId,
+              syncMode: syncResult.syncMode,
               supabaseSyncedAt: syncResult.syncedAt,
               supabaseSyncError: undefined
             }
@@ -113,7 +116,10 @@ export function ResultView() {
             <Link href="/" className="text-sm font-bold tracking-[0.18em] text-teal-200">
               ROAMGRID
             </Link>
-            <LanguageToggle language={language} onChange={handleLanguageChange} />
+            <div className="flex items-center gap-2">
+              <AccountMenu language={language} compact />
+              <LanguageToggle language={language} onChange={handleLanguageChange} />
+            </div>
           </div>
           <p className="text-sm font-black uppercase tracking-[0.24em] text-teal-200">
             {t(language, "missionComplete")}

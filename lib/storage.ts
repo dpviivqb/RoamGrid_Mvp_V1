@@ -7,16 +7,17 @@ export const STORAGE_KEYS = {
   lastResult: "roamgrid_last_result",
   discoveredGrids: "roamgrid_discovered_grids",
   adminGridHistory: "roamgrid_admin_grid_history_v1",
+  authHistoryMergedUsers: "roamgrid_auth_history_merged_users_v1",
   language: "roamgrid_language"
 } as const;
 
-type AdminGridHistoryEntry = {
+export type AdminGridHistoryEntry = {
   gridIds: string[];
   updatedAt: string;
   areaName: string;
 };
 
-type AdminGridHistory = Record<string, AdminGridHistoryEntry>;
+export type AdminGridHistory = Record<string, AdminGridHistoryEntry>;
 
 export function getAnonymousId() {
   if (typeof window === "undefined") {
@@ -92,6 +93,19 @@ export function getAdminDiscoveredGrids(adminAreaId: string) {
   return history[adminAreaId]?.gridIds.filter(isGlobalGridId) ?? [];
 }
 
+export function getAllAdminGridHistory() {
+  const history = getAdminGridHistory();
+  return Object.fromEntries(
+    Object.entries(history).map(([adminAreaId, entry]) => [
+      adminAreaId,
+      {
+        ...entry,
+        gridIds: entry.gridIds.filter(isGlobalGridId)
+      }
+    ])
+  ) as AdminGridHistory;
+}
+
 export function mergeAdminDiscoveredGrids(adminAreaId: string, areaName: string, gridIds: string[]) {
   const history = getAdminGridHistory();
   const existing = history[adminAreaId]?.gridIds ?? [];
@@ -106,6 +120,17 @@ export function mergeAdminDiscoveredGrids(adminAreaId: string, areaName: string,
   window.localStorage.setItem(STORAGE_KEYS.adminGridHistory, JSON.stringify(history));
   window.localStorage.removeItem(STORAGE_KEYS.discoveredGrids);
   return merged;
+}
+
+export function hasMergedLocalHistoryForUser(userId: string) {
+  const mergedUserIds = getMergedHistoryUserIds();
+  return mergedUserIds.includes(userId);
+}
+
+export function markLocalHistoryMergedForUser(userId: string) {
+  const mergedUserIds = getMergedHistoryUserIds();
+  const nextUserIds = Array.from(new Set([...mergedUserIds, userId]));
+  window.localStorage.setItem(STORAGE_KEYS.authHistoryMergedUsers, JSON.stringify(nextUserIds));
 }
 
 export function clearLegacyDiscoveredGrids() {
@@ -144,5 +169,25 @@ function getAdminGridHistory() {
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+function getMergedHistoryUserIds() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const value = window.localStorage.getItem(STORAGE_KEYS.authHistoryMergedUsers);
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
   }
 }

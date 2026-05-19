@@ -28,9 +28,21 @@ export type AdminArea = {
   sourceVersion: string;
 };
 
+export type AuthUser = {
+  id: string;
+  email?: string;
+};
+
+export type AuthState = {
+  user: AuthUser | null;
+  isLoading: boolean;
+};
+
 export type ExplorationSession = {
   id: string;
   anonymousId: string;
+  userId?: string;
+  syncMode?: "anonymous" | "authenticated";
   startedAt: string;
   endedAt?: string;
   cityName: string;
@@ -52,6 +64,8 @@ export type ExplorationSession = {
 export type ExplorationResult = Required<
   Pick<ExplorationSession, "id" | "anonymousId" | "startedAt" | "endedAt" | "cityName">
 > & {
+  userId?: string;
+  syncMode?: "anonymous" | "authenticated";
   points: LocationPoint[];
   discoveredGridIds: string[];
   distanceMeters: number;
@@ -69,4 +83,26 @@ export type ExplorationResult = Required<
 export type GridCell = {
   id: string;
   polygon: GeoJSON.Position[];
+};
+
+export type RemoteAdminGridHistory = {
+  adminAreaId: string;
+  gridIds: string[];
+};
+
+export type RemoteExplorationHistoryItem = {
+  id: string;
+  userId: string;
+  startedAt: string;
+  endedAt: string;
+  cityName?: string;
+  adminAreaId?: string;
+  adminAreaName?: string;
+  distanceMeters: number;
+  durationSeconds: number;
+  discoveredGridCount: number;
+  explorationPercentage: number;
+  totalGridCount?: number;
+  points: LocationPoint[];
+  discoveredGridIds: string[];
 };

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import mapboxgl from "mapbox-gl";
+import { AccountMenu } from "@/components/AccountMenu";
 import { createPulsingMarkerElement } from "@/components/PulsingMarker";
 import {
   getAdminAreaFeatureCollection,
@@ -27,7 +28,7 @@ import {
   saveCurrentSession,
   saveLastResult
 } from "@/lib/storage";
-import { saveResultToSupabase } from "@/lib/supabase";
+import { getRemoteAdminDiscoveredGrids, saveResultToSupabase } from "@/lib/supabase";
 import { applyMapLanguage, captureMapSnapshot, formatPlaceLabel, resolvePlaceInfo } from "@/lib/mapbox";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
 import type { ExplorationResult, ExplorationSession, LocationPoint } from "@/lib/types";
@@ -48,6 +49,7 @@ export function ExploreMap() {
   const resolvingCityRef = useRef(false);
   const unlockTimeoutRef = useRef<number | null>(null);
   const hasCenteredOnUserRef = useRef(false);
+  const remoteHistoryRequestRef = useRef(0);
 
   const [session, setSession] = useState<ExplorationSession | null>(null);
   const [adminArea, setAdminArea] = useState<ResolvedAdminArea["area"] | null>(null);
@@ -55,6 +57,7 @@ export function ExploreMap() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [status, setStatus] = useState("waitingLocation");
   const [error, setError] = useState<string | null>(null);
+  const [historySyncError, setHistorySyncError] = useState<string | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [newGridId, setNewGridId] = useState<string | null>(null);
 
@@ -124,16 +127,48 @@ export function ExploreMap() {
   }, []);
 
   const applyAdminArea = useCallback(
-    (nextAdminArea: ResolvedAdminArea | null) => {
+    async (nextAdminArea: ResolvedAdminArea | null) => {
+      const requestId = remoteHistoryRequestRef.current + 1;
+      remoteHistoryRequestRef.current = requestId;
       adminAreaRef.current = nextAdminArea;
       setAdminArea(nextAdminArea?.area ?? null);
-      historicalGridIdsRef.current = nextAdminArea
-        ? getAdminDiscoveredGrids(nextAdminArea.area.id)
-        : [];
+      historicalGridIdsRef.current = nextAdminArea ? getAdminDiscoveredGrids(nextAdminArea.area.id) : [];
       updateAdminBoundary(nextAdminArea);
       updateMap(sessionRef.current);
+
+      if (!nextAdminArea) {
+        setHistorySyncError(null);
+        return;
+      }
+
+      setHistorySyncError(null);
+      const remoteHistory = await getRemoteAdminDiscoveredGrids(nextAdminArea.area.id);
+      if (
+        remoteHistoryRequestRef.current !== requestId ||
+        adminAreaRef.current?.area.id !== nextAdminArea.area.id
+      ) {
+        return;
+      }
+
+      if (!remoteHistory.ok) {
+        if (remoteHistory.reason !== "not_authenticated" && remoteHistory.reason !== "not_configured") {
+          setHistorySyncError(
+            t(language, "remoteHistorySyncFailed", { error: remoteHistory.error })
+          );
+        }
+        return;
+      }
+
+      if (remoteHistory.data.length > 0) {
+        historicalGridIdsRef.current = mergeAdminDiscoveredGrids(
+          nextAdminArea.area.id,
+          nextAdminArea.area.localName ?? nextAdminArea.area.name,
+          remoteHistory.data
+        );
+        updateMap(sessionRef.current);
+      }
     },
-    [updateAdminBoundary, updateMap]
+    [language, updateAdminBoundary, updateMap]
   );
 
   const resolveAdminAreaForPoint = useCallback(
@@ -151,7 +186,7 @@ export function ExploreMap() {
       try {
         const resolvedArea = await resolveAdminArea(point.lat, point.lng);
         if (!resolvedArea) {
-          applyAdminArea(null);
+          await applyAdminArea(null);
           setStatus("adminAreaUnsupported");
           return null;
         }
@@ -169,7 +204,7 @@ export function ExploreMap() {
           );
         }
 
-        applyAdminArea(resolvedArea);
+        await applyAdminArea(resolvedArea);
         return resolvedArea;
       } catch (adminError) {
         console.error("Failed to resolve admin area", adminError);
@@ -620,7 +655,11 @@ export function ExploreMap() {
         1,
         Math.floor((new Date(endedAt).getTime() - new Date(current.startedAt).getTime()) / 1000)
       ),
-      explorationPercentage: current.explorationPercentage
+      explorationPercentage: current.explorationPercentage,
+      totalGridCount: current.totalGridCount,
+      adminArea: current.adminArea,
+      userId: current.userId,
+      syncMode: current.syncMode
     };
 
     if (current.adminArea) {
@@ -635,7 +674,12 @@ export function ExploreMap() {
     const syncResult = await saveResultToSupabase(result);
     saveLastResult(
       syncResult.ok
-        ? { ...result, supabaseSyncedAt: syncResult.syncedAt }
+        ? {
+            ...result,
+            userId: syncResult.userId,
+            syncMode: syncResult.syncMode,
+            supabaseSyncedAt: syncResult.syncedAt
+          }
         : { ...result, supabaseSyncError: syncResult.error }
     );
     router.push("/result");
@@ -643,6 +687,7 @@ export function ExploreMap() {
 
   const statusMessage =
     error ??
+    historySyncError ??
     t(
       language,
       status as
@@ -676,7 +721,7 @@ export function ExploreMap() {
               <HudCard label={t(language, "map")} value={formatPercentage(stats.explorationPercentage)} />
               <HudCard label={t(language, "blocks")} value={String(stats.discoveredGridCount)} />
             </div>
-            <div className="flex items-start gap-2 sm:block">
+            <div className="flex items-start gap-2 sm:flex">
               <div className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md sm:hidden">
                 <div className="truncate">{statusMessage}</div>
               </div>
@@ -687,6 +732,7 @@ export function ExploreMap() {
                   saveLanguage(nextLanguage);
                 }}
               />
+              <AccountMenu language={language} compact />
             </div>
           </div>
         </div>

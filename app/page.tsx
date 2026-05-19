@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AccountMenu } from "@/components/AccountMenu";
 import { HomeLiveMapPreview } from "@/components/HomeLiveMapPreview";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
@@ -68,6 +69,7 @@ export default function HomePage() {
             <div className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs sm:block">
               {t(language, "previewTag")}
             </div>
+            <AccountMenu language={language} />
             <LanguageToggle language={language} onChange={handleLanguageChange} />
           </div>
         </nav>

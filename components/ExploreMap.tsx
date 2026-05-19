@@ -462,45 +462,53 @@ export function ExploreMap() {
     router.push("/result");
   }
 
+  const statusMessage =
+    error ?? t(language, status as "waitingLocation" | "explorationActive" | "locationUnavailable");
+
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-slate-950">
+    <main className="explore-map relative h-[100dvh] min-h-screen w-screen overflow-hidden bg-slate-950">
       <div ref={mapContainerRef} className="absolute inset-0" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(2,6,23,0.01)_36%,rgba(2,6,23,0.42)_100%)]" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:52px_52px]" />
       {newGridId ? <div className="pointer-events-none absolute inset-0 animate-territory-flash" /> : null}
 
-      <section className="absolute left-3 right-3 top-3 z-10 flex flex-col gap-3 sm:left-5 sm:right-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 rounded-md border border-teal-200/20 bg-black/32 px-3 py-2 shadow-hud backdrop-blur-md">
+      <section className="absolute left-3 right-3 top-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10 flex flex-col gap-2 sm:left-5 sm:right-5 sm:top-5 sm:gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-3">
+          <div className="min-w-0 rounded-md border border-teal-200/20 bg-black/32 px-3 py-2 shadow-hud backdrop-blur-md sm:max-w-[48vw]">
             <div className="text-[11px] font-black uppercase tracking-[0.22em] text-teal-200">
               RoamGrid
             </div>
-            <div className="mt-1 max-w-[78vw] truncate text-base font-black text-white sm:max-w-[42vw] sm:text-xl">
+            <div className="mt-1 line-clamp-2 text-base font-black leading-snug text-white sm:line-clamp-none sm:truncate sm:text-xl">
               {t(language, "exploring", {
                 place: formatPlaceLabel(session?.placeInfo, language)
               })}
             </div>
           </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            <div className="grid grid-cols-4 gap-2">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+            <div className="grid min-w-0 grid-cols-4 gap-1.5 sm:gap-2">
               <HudCard label={t(language, "time")} value={formatDuration(elapsedSeconds)} />
               <HudCard label={t(language, "dist")} value={formatDistance(stats.distanceMeters)} />
               <HudCard label={t(language, "map")} value={formatPercentage(stats.explorationPercentage)} />
               <HudCard label={t(language, "blocks")} value={String(stats.discoveredGridCount)} />
             </div>
-            <LanguageToggle
-              language={language}
-              onChange={(nextLanguage) => {
-                setLanguage(nextLanguage);
-                saveLanguage(nextLanguage);
-              }}
-            />
+            <div className="flex items-start gap-2 sm:block">
+              <div className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md sm:hidden">
+                <div className="truncate">{statusMessage}</div>
+              </div>
+              <LanguageToggle
+                language={language}
+                onChange={(nextLanguage) => {
+                  setLanguage(nextLanguage);
+                  saveLanguage(nextLanguage);
+                }}
+              />
+            </div>
           </div>
         </div>
       </section>
 
-      <div className="absolute left-3 top-32 z-10 max-w-md rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md sm:left-5 sm:top-24">
-        <div>{error ?? t(language, status as "waitingLocation" | "explorationActive" | "locationUnavailable")}</div>
+      <div className="absolute left-5 top-24 z-10 hidden max-w-md rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md sm:block">
+        <div>{statusMessage}</div>
       </div>
 
       {error && !mapboxToken ? (
@@ -521,7 +529,7 @@ export function ExploreMap() {
         </div>
       ) : null}
 
-      <div className="absolute bottom-5 left-3 right-3 z-10 sm:left-1/2 sm:right-auto sm:w-[360px] sm:-translate-x-1/2">
+      <div className="absolute bottom-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] left-3 right-3 z-10 sm:bottom-5 sm:left-1/2 sm:right-auto sm:w-[360px] sm:-translate-x-1/2">
         <button
           type="button"
           onClick={finishExploration}
@@ -537,11 +545,11 @@ export function ExploreMap() {
 
 function HudCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-[72px] rounded-md border border-white/10 bg-black/38 px-3 py-2 text-center shadow-hud backdrop-blur-md sm:min-w-[92px]">
+    <div className="min-w-0 rounded-md border border-white/10 bg-black/38 px-2 py-2 text-center shadow-hud backdrop-blur-md sm:min-w-[92px] sm:px-3">
       <div className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400 sm:text-[10px]">
         {label}
       </div>
-      <div className="mt-1 text-sm font-black text-white sm:text-lg">{value}</div>
+      <div className="mt-1 truncate text-sm font-black text-white sm:text-lg">{value}</div>
     </div>
   );
 }

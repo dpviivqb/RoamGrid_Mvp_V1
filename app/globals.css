@@ -35,6 +35,18 @@ a {
   opacity: 0.65;
 }
 
+.explore-map .mapboxgl-ctrl-bottom-left,
+.explore-map .mapboxgl-ctrl-bottom-right {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5.75rem);
+}
+
+@media (min-width: 640px) {
+  .explore-map .mapboxgl-ctrl-bottom-left,
+  .explore-map .mapboxgl-ctrl-bottom-right {
+    bottom: 0;
+  }
+}
+
 @keyframes territory-flash {
   0% {
     background: radial-gradient(circle at center, rgba(45, 212, 191, 0.28), transparent 18rem);

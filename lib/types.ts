@@ -98,6 +98,7 @@ export type RemoteExplorationHistoryItem = {
   cityName?: string;
   adminAreaId?: string;
   adminAreaName?: string;
+  displayName?: string;
   distanceMeters: number;
   durationSeconds: number;
   discoveredGridCount: number;

@@ -972,11 +972,16 @@ function getExplorePlaceLabel(
   adminArea: ResolvedAdminArea["area"] | null,
   language: Language
 ) {
-  return (
+  const basePlace = formatPlaceLabel(session?.placeInfo, language);
+  const adminName =
     adminArea?.localName ??
     adminArea?.name ??
     session?.adminArea?.localName ??
-    session?.adminArea?.name ??
-    formatPlaceLabel(session?.placeInfo, language)
-  );
+    session?.adminArea?.name;
+
+  if (adminName && basePlace && !basePlace.toLowerCase().includes(adminName.toLowerCase())) {
+    return `${basePlace} · ${adminName}`;
+  }
+
+  return adminName ?? basePlace;
 }

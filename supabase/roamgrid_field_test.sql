@@ -73,9 +73,9 @@ grant usage on schema public to anon, authenticated;
 grant insert on table public.exploration_sessions to anon;
 grant insert on table public.location_points to anon;
 grant insert on table public.discovered_grids to anon;
-grant insert, select on table public.exploration_sessions to authenticated;
-grant insert, select on table public.location_points to authenticated;
-grant insert, select on table public.discovered_grids to authenticated;
+grant insert, select, delete on table public.exploration_sessions to authenticated;
+grant insert, select, delete on table public.location_points to authenticated;
+grant insert, select, delete on table public.discovered_grids to authenticated;
 
 drop policy if exists "anon can insert exploration sessions" on public.exploration_sessions;
 create policy "anon can insert exploration sessions"
@@ -112,6 +112,13 @@ for select
 to authenticated
 using ((select auth.uid()) = user_id);
 
+drop policy if exists "authenticated can delete own exploration sessions" on public.exploration_sessions;
+create policy "authenticated can delete own exploration sessions"
+on public.exploration_sessions
+for delete
+to authenticated
+using ((select auth.uid()) = user_id);
+
 drop policy if exists "authenticated can insert own location points" on public.location_points;
 create policy "authenticated can insert own location points"
 on public.location_points
@@ -126,6 +133,13 @@ for select
 to authenticated
 using ((select auth.uid()) = user_id);
 
+drop policy if exists "authenticated can delete own location points" on public.location_points;
+create policy "authenticated can delete own location points"
+on public.location_points
+for delete
+to authenticated
+using ((select auth.uid()) = user_id);
+
 drop policy if exists "authenticated can insert own discovered grids" on public.discovered_grids;
 create policy "authenticated can insert own discovered grids"
 on public.discovered_grids
@@ -137,5 +151,12 @@ drop policy if exists "authenticated can read own discovered grids" on public.di
 create policy "authenticated can read own discovered grids"
 on public.discovered_grids
 for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+drop policy if exists "authenticated can delete own discovered grids" on public.discovered_grids;
+create policy "authenticated can delete own discovered grids"
+on public.discovered_grids
+for delete
 to authenticated
 using ((select auth.uid()) = user_id);

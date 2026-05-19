@@ -147,7 +147,7 @@ export function AuthView() {
       return;
     }
 
-    router.push("/explore");
+    router.push("/");
   }
 
   const text = copy[language];

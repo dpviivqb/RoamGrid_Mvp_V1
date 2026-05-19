@@ -8,6 +8,7 @@ import { buildGridCells } from "@/lib/grid";
 import { formatDistance, formatDuration, formatPercentage } from "@/lib/format";
 import { getInitialLanguage, saveLanguage, type Language } from "@/lib/i18n";
 import {
+  deleteRemoteExplorationSession,
   getCurrentAuthUser,
   getRemoteExplorationHistory,
   getSupabaseBrowserClient
@@ -30,7 +31,12 @@ const copy = {
     progress: "Progress",
     points: "Route points",
     grids: "Session grids",
-    routeUnavailable: "Route unavailable"
+    routeUnavailable: "Route unavailable",
+    routeStatic: "Location points are too close to form a visible route.",
+    delete: "Delete",
+    deleting: "Deleting...",
+    deleteConfirm: "Delete this history record?",
+    deleteFailed: "Failed to delete history: {error}"
   },
   zh: {
     title: "探索历史",
@@ -47,7 +53,12 @@ const copy = {
     progress: "进度",
     points: "轨迹点",
     grids: "本次方块",
-    routeUnavailable: "暂无轨迹"
+    routeUnavailable: "暂无轨迹",
+    routeStatic: "定位点距离太近，无法形成可见轨迹。",
+    delete: "删除",
+    deleting: "删除中...",
+    deleteConfirm: "删除这条历史记录？",
+    deleteFailed: "删除历史失败：{error}"
   }
 } as const;
 
@@ -57,6 +68,7 @@ export function HistoryView() {
   const [items, setItems] = useState<RemoteExplorationHistoryItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -120,6 +132,30 @@ export function HistoryView() {
     () => items.find((item) => item.id === selectedId) ?? items[0],
     [items, selectedId]
   );
+
+  async function deleteHistoryItem(itemId: string) {
+    if (!window.confirm(text.deleteConfirm)) {
+      return;
+    }
+
+    setDeletingId(itemId);
+    setError(null);
+    const result = await deleteRemoteExplorationSession(itemId);
+    if (!result.ok) {
+      setError(text.deleteFailed.replace("{error}", result.error));
+      setDeletingId(null);
+      return;
+    }
+
+    setItems((currentItems) => {
+      const nextItems = currentItems.filter((item) => item.id !== itemId);
+      setSelectedId((currentSelectedId) =>
+        currentSelectedId === itemId ? nextItems[0]?.id ?? null : currentSelectedId
+      );
+      return nextItems;
+    });
+    setDeletingId(null);
+  }
 
   return (
     <main className="min-h-screen px-4 py-6 sm:px-6">
@@ -195,7 +231,7 @@ export function HistoryView() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="truncate text-lg font-black text-white">
-                        {item.adminAreaName ?? item.cityName ?? "RoamGrid"}
+                        {getHistoryPlaceName(item)}
                       </div>
                       <div className="mt-1 text-sm text-slate-400">
                         {formatDate(item.endedAt, language)}
@@ -218,19 +254,31 @@ export function HistoryView() {
               <div className="rounded-lg border border-white/10 bg-black/30 p-4 shadow-hud backdrop-blur-md">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="truncate text-2xl font-black text-white">
-                      {selectedItem.adminAreaName ?? selectedItem.cityName ?? "RoamGrid"}
-                    </h2>
+                    <h2 className="truncate text-2xl font-black text-white">{getHistoryPlaceName(selectedItem)}</h2>
                     <p className="mt-1 text-sm text-slate-400">
                       {formatDate(selectedItem.startedAt, language)} - {formatDate(selectedItem.endedAt, language)}
                     </p>
                   </div>
-                  <div className="rounded-md border border-teal-200/30 bg-teal-300/10 px-3 py-2 text-sm font-black text-teal-100">
-                    +{selectedItem.discoveredGridCount}
+                  <div className="flex shrink-0 items-start gap-2">
+                    <div className="rounded-md border border-teal-200/30 bg-teal-300/10 px-3 py-2 text-sm font-black text-teal-100">
+                      +{selectedItem.discoveredGridCount}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void deleteHistoryItem(selectedItem.id)}
+                      disabled={deletingId === selectedItem.id}
+                      className="rounded-md border border-rose-200/20 bg-rose-300/10 px-3 py-2 text-sm font-black text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {deletingId === selectedItem.id ? text.deleting : text.delete}
+                    </button>
                   </div>
                 </div>
 
-                <RoutePreview points={selectedItem.points} fallback={text.routeUnavailable} />
+                <RoutePreview
+                  points={selectedItem.points}
+                  fallback={text.routeUnavailable}
+                  staticFallback={text.routeStatic}
+                />
 
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <DetailStat label={text.distance} value={formatDistance(selectedItem.distanceMeters)} />
@@ -276,7 +324,15 @@ function DetailStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RoutePreview({ points, fallback }: { points: LocationPoint[]; fallback: string }) {
+function RoutePreview({
+  points,
+  fallback,
+  staticFallback
+}: {
+  points: LocationPoint[];
+  fallback: string;
+  staticFallback: string;
+}) {
   if (points.length < 2) {
     return (
       <div className="mt-5 grid h-64 place-items-center rounded-lg border border-white/10 bg-slate-950 text-sm text-slate-400">
@@ -289,21 +345,46 @@ function RoutePreview({ points, fallback }: { points: LocationPoint[]; fallback:
   const linePoints = projected.map((point) => `${point.x},${point.y}`).join(" ");
   const first = projected[0];
   const last = projected[projected.length - 1];
+  const isStatic = calculateProjectedLength(projected) < 14;
 
   return (
     <div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-slate-950">
       <svg viewBox="0 0 640 360" className="h-64 w-full">
         <defs>
           <pattern id="history-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(148, 163, 184, 0.14)" strokeWidth="1" />
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(148, 163, 184, 0.18)" strokeWidth="1" />
           </pattern>
+          <filter id="route-glow">
+            <feGaussianBlur stdDeviation="5" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
         <rect width="640" height="360" fill="url(#history-grid)" />
-        <polyline points={linePoints} fill="none" stroke="#38bdf8" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" opacity="0.95" />
-        <polyline points={linePoints} fill="none" stroke="#67e8f9" strokeWidth="18" strokeLinecap="round" strokeLinejoin="round" opacity="0.18" />
-        <circle cx={first.x} cy={first.y} r="8" fill="#5eead4" />
-        <circle cx={last.x} cy={last.y} r="10" fill="#f0fdfa" stroke="#38bdf8" strokeWidth="4" />
+        <polyline points={linePoints} fill="none" stroke="#67e8f9" strokeWidth="22" strokeLinecap="round" strokeLinejoin="round" opacity="0.22" />
+        <polyline points={linePoints} fill="none" stroke="#38bdf8" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" opacity="1" filter="url(#route-glow)" />
+        {projected.map((point, index) => (
+          <circle
+            key={`${point.x}-${point.y}-${index}`}
+            cx={point.x}
+            cy={point.y}
+            r={index === 0 || index === projected.length - 1 ? 7 : 4}
+            fill={index === projected.length - 1 ? "#f0fdfa" : "#5eead4"}
+            stroke="#082f49"
+            strokeWidth="2"
+            opacity={0.95}
+          />
+        ))}
+        <circle cx={first.x} cy={first.y} r="11" fill="none" stroke="#5eead4" strokeWidth="3" />
+        <circle cx={last.x} cy={last.y} r="13" fill="none" stroke="#f0fdfa" strokeWidth="3" />
       </svg>
+      {isStatic ? (
+        <div className="border-t border-white/10 px-4 py-3 text-sm text-slate-400">
+          {staticFallback}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -355,4 +436,19 @@ function formatDate(value: string, language: Language) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function getHistoryPlaceName(item: RemoteExplorationHistoryItem) {
+  return item.displayName ?? item.adminAreaName ?? item.cityName ?? "RoamGrid";
+}
+
+function calculateProjectedLength(points: Array<{ x: number; y: number }>) {
+  return points.reduce((distance, point, index) => {
+    const previous = points[index - 1];
+    if (!previous) {
+      return distance;
+    }
+
+    return distance + Math.hypot(point.x - previous.x, point.y - previous.y);
+  }, 0);
 }

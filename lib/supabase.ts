@@ -266,6 +266,7 @@ export async function getRemoteExplorationHistory(): Promise<
       cityName: session.city_name ?? undefined,
       adminAreaId: session.admin_area_id ?? undefined,
       adminAreaName: session.admin_area_name ?? undefined,
+      displayName: buildDisplayName(session.city_name, session.admin_area_name),
       distanceMeters: session.distance_meters,
       durationSeconds: calculateDurationSeconds(session.started_at, session.ended_at),
       discoveredGridCount: session.discovered_grid_count,
@@ -275,6 +276,52 @@ export async function getRemoteExplorationHistory(): Promise<
       discoveredGridIds: Array.from(new Set(gridsBySession.get(session.id) ?? []))
     }))
   };
+}
+
+export async function deleteRemoteExplorationSession(
+  sessionId: string
+): Promise<SupabaseDataResult<string>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase is not configured.", reason: "not_configured" };
+  }
+
+  const authUser = await getCurrentAuthUser();
+  if (!authUser) {
+    return { ok: false, error: "Sign in to delete history.", reason: "not_authenticated" };
+  }
+
+  const gridsResult = await supabase
+    .from("discovered_grids")
+    .delete()
+    .eq("user_id", authUser.id)
+    .eq("session_id", sessionId);
+
+  if (gridsResult.error) {
+    return { ok: false, error: formatSupabaseError("Failed to delete discovered grids", gridsResult.error) };
+  }
+
+  const pointsResult = await supabase
+    .from("location_points")
+    .delete()
+    .eq("user_id", authUser.id)
+    .eq("session_id", sessionId);
+
+  if (pointsResult.error) {
+    return { ok: false, error: formatSupabaseError("Failed to delete location points", pointsResult.error) };
+  }
+
+  const sessionResult = await supabase
+    .from("exploration_sessions")
+    .delete()
+    .eq("user_id", authUser.id)
+    .eq("id", sessionId);
+
+  if (sessionResult.error) {
+    return { ok: false, error: formatSupabaseError("Failed to delete exploration session", sessionResult.error) };
+  }
+
+  return { ok: true, data: sessionId };
 }
 
 async function saveSession(
@@ -407,6 +454,17 @@ function toAuthUser(user: { id: string; email?: string }) {
 
 function calculateDurationSeconds(startedAt: string, endedAt: string) {
   return Math.max(1, Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
+}
+
+function buildDisplayName(cityName: string | null, adminAreaName: string | null) {
+  const city = cityName?.trim();
+  const adminArea = adminAreaName?.trim();
+
+  if (city && adminArea && !city.toLowerCase().includes(adminArea.toLowerCase())) {
+    return `${city} · ${adminArea}`;
+  }
+
+  return city || adminArea || undefined;
 }
 
 type SessionHistoryRow = {

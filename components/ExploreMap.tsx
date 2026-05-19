@@ -15,6 +15,7 @@ import { LanguageToggle } from "@/components/LanguageToggle";
 import {
   clearCurrentSession,
   getAnonymousId,
+  getDiscoveredGrids,
   mergeDiscoveredGrids,
   saveCurrentSession,
   saveLastResult
@@ -34,6 +35,7 @@ export function ExploreMap() {
   const watchIdRef = useRef<number | null>(null);
   const lastRecordedAtRef = useRef(0);
   const sessionRef = useRef<ExplorationSession | null>(null);
+  const historicalGridIdsRef = useRef<string[]>([]);
   const resolvingCityRef = useRef(false);
   const unlockTimeoutRef = useRef<number | null>(null);
   const hasCenteredOnUserRef = useRef(false);
@@ -56,7 +58,7 @@ export function ExploreMap() {
     };
   }, [session]);
 
-  const updateMap = useCallback((nextSession: ExplorationSession, activeGridId?: string) => {
+  const updateMap = useCallback((nextSession: ExplorationSession | null, activeGridId?: string) => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) {
       return;
@@ -68,17 +70,25 @@ export function ExploreMap() {
       properties: {},
       geometry: {
         type: "LineString",
-        coordinates: nextSession.points.map((point) => [point.lng, point.lat])
+        coordinates: nextSession?.points.map((point) => [point.lng, point.lat]) ?? []
       }
     });
 
-    const gridCells = buildGridCells(nextSession.discoveredGridIds, nextSession.origin);
+    const sessionGridIds = nextSession?.discoveredGridIds ?? [];
+    const historicalGridIds = historicalGridIdsRef.current;
+    const sessionGridIdSet = new Set(sessionGridIds);
+    const historicalGridIdSet = new Set(historicalGridIds);
+    const gridCells = buildGridCells(Array.from(new Set([...historicalGridIds, ...sessionGridIds])));
     const gridSource = map.getSource("discovered-grids") as mapboxgl.GeoJSONSource | undefined;
     gridSource?.setData({
       type: "FeatureCollection",
       features: gridCells.map((cell) => ({
         type: "Feature",
-        properties: { id: cell.id, isNew: cell.id === activeGridId },
+        properties: {
+          id: cell.id,
+          isHistorical: historicalGridIdSet.has(cell.id) && !sessionGridIdSet.has(cell.id),
+          isNew: cell.id === activeGridId
+        },
         geometry: {
           type: "Polygon",
           coordinates: [cell.polygon]
@@ -150,12 +160,14 @@ export function ExploreMap() {
       const current = sessionRef.current;
       const anonymousId = getAnonymousId();
       const origin = current?.origin ?? { lat: point.lat, lng: point.lng };
-      const gridId = getGridId(point.lat, point.lng, origin);
-      const isNewGrid = !current?.discoveredGridIds.includes(gridId);
+      const gridId = getGridId(point.lat, point.lng);
+      const currentGridIds = current?.discoveredGridIds ?? [];
+      const isNewGrid =
+        !historicalGridIdsRef.current.includes(gridId) && !currentGridIds.includes(gridId);
       const points = [...(current?.points ?? []), point];
-      const discoveredGridIds = Array.from(
-        new Set([...(current?.discoveredGridIds ?? []), gridId])
-      );
+      const discoveredGridIds = isNewGrid
+        ? Array.from(new Set([...currentGridIds, gridId]))
+        : currentGridIds;
       const distanceMeters = calculateDistance(points);
       const explorationPercentage = calculateExplorationPercentage(discoveredGridIds.length);
 
@@ -272,7 +284,14 @@ export function ExploreMap() {
           "line-color": ["case", ["==", ["get", "isNew"], true], "#f0fdfa", "#5eead4"],
           "line-width": ["case", ["==", ["get", "isNew"], true], 12, 7],
           "line-blur": ["case", ["==", ["get", "isNew"], true], 12, 9],
-          "line-opacity": ["case", ["==", ["get", "isNew"], true], 0.95, 0.55]
+          "line-opacity": [
+            "case",
+            ["==", ["get", "isNew"], true],
+            0.95,
+            ["==", ["get", "isHistorical"], true],
+            0.28,
+            0.55
+          ]
         }
       });
 
@@ -282,7 +301,14 @@ export function ExploreMap() {
         source: "discovered-grids",
         paint: {
           "fill-color": ["case", ["==", ["get", "isNew"], true], "#67e8f9", "#2dd4bf"],
-          "fill-opacity": ["case", ["==", ["get", "isNew"], true], 0.58, 0.32]
+          "fill-opacity": [
+            "case",
+            ["==", ["get", "isNew"], true],
+            0.58,
+            ["==", ["get", "isHistorical"], true],
+            0.18,
+            0.32
+          ]
         }
       });
 
@@ -292,8 +318,15 @@ export function ExploreMap() {
         source: "discovered-grids",
         paint: {
           "line-color": ["case", ["==", ["get", "isNew"], true], "#ffffff", "#99f6e4"],
-          "line-width": ["case", ["==", ["get", "isNew"], true], 3.5, 2],
-          "line-opacity": 0.94
+          "line-width": [
+            "case",
+            ["==", ["get", "isNew"], true],
+            3.5,
+            ["==", ["get", "isHistorical"], true],
+            1.4,
+            2
+          ],
+          "line-opacity": ["case", ["==", ["get", "isHistorical"], true], 0.62, 0.94]
         }
       });
 
@@ -327,6 +360,8 @@ export function ExploreMap() {
           "line-blur": 1
         }
       });
+
+      updateMap(sessionRef.current);
     });
 
     return () => {
@@ -343,11 +378,13 @@ export function ExploreMap() {
   }, []);
 
   useEffect(() => {
+    historicalGridIdsRef.current = getDiscoveredGrids();
     sessionRef.current = null;
     lastRecordedAtRef.current = 0;
     resolvingCityRef.current = false;
     hasCenteredOnUserRef.current = false;
-  }, []);
+    updateMap(sessionRef.current);
+  }, [updateMap]);
 
   useEffect(() => {
     if (!mapboxToken || !("geolocation" in navigator)) {

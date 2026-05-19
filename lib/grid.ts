@@ -1,41 +1,35 @@
 import type { GridCell, LocationPoint } from "@/lib/types";
 
-export const GRID_SIZE_METERS = 150;
+export const GRID_SIZE_METERS = 100;
 export const EXPLORATION_AREA_METERS = 5000;
-export const GRID_COLUMNS = 34;
+export const GRID_COLUMNS = EXPLORATION_AREA_METERS / GRID_SIZE_METERS;
 export const TOTAL_GRID_COUNT = GRID_COLUMNS * GRID_COLUMNS;
 
-const METERS_PER_DEGREE_LAT = 111_320;
+const EARTH_RADIUS_METERS = 6_378_137;
+const MAX_MERCATOR_LAT = 85.05112878;
+const GRID_ID_PREFIX = "g100";
 
-type Origin = {
-  lat: number;
-  lng: number;
-};
-
-function metersPerDegreeLng(lat: number) {
-  return METERS_PER_DEGREE_LAT * Math.cos((lat * Math.PI) / 180);
+export function getGridId(lat: number, lng: number) {
+  const x = Math.floor(lngToMercatorX(lng) / GRID_SIZE_METERS);
+  const y = Math.floor(latToMercatorY(lat) / GRID_SIZE_METERS);
+  return `${GRID_ID_PREFIX}:${x}:${y}`;
 }
 
-export function getGridId(lat: number, lng: number, origin: Origin) {
-  const xMeters = (lng - origin.lng) * metersPerDegreeLng(origin.lat);
-  const yMeters = (lat - origin.lat) * METERS_PER_DEGREE_LAT;
-  const x = Math.floor((xMeters + EXPLORATION_AREA_METERS / 2) / GRID_SIZE_METERS);
-  const y = Math.floor((yMeters + EXPLORATION_AREA_METERS / 2) / GRID_SIZE_METERS);
-  return `${x}:${y}`;
-}
+export function getGridPolygon(gridId: string): GeoJSON.Position[] {
+  const parsed = parseGridId(gridId);
+  if (!parsed) {
+    return [];
+  }
 
-export function getGridPolygon(gridId: string, origin: Origin): GeoJSON.Position[] {
-  const [x, y] = gridId.split(":").map(Number);
-  const minXMeters = x * GRID_SIZE_METERS - EXPLORATION_AREA_METERS / 2;
-  const minYMeters = y * GRID_SIZE_METERS - EXPLORATION_AREA_METERS / 2;
+  const minXMeters = parsed.x * GRID_SIZE_METERS;
+  const minYMeters = parsed.y * GRID_SIZE_METERS;
   const maxXMeters = minXMeters + GRID_SIZE_METERS;
   const maxYMeters = minYMeters + GRID_SIZE_METERS;
-  const lngMeters = metersPerDegreeLng(origin.lat);
 
-  const minLng = origin.lng + minXMeters / lngMeters;
-  const maxLng = origin.lng + maxXMeters / lngMeters;
-  const minLat = origin.lat + minYMeters / METERS_PER_DEGREE_LAT;
-  const maxLat = origin.lat + maxYMeters / METERS_PER_DEGREE_LAT;
+  const minLng = mercatorXToLng(minXMeters);
+  const maxLng = mercatorXToLng(maxXMeters);
+  const minLat = mercatorYToLat(minYMeters);
+  const maxLat = mercatorYToLat(maxYMeters);
 
   return [
     [minLng, minLat],
@@ -46,16 +40,18 @@ export function getGridPolygon(gridId: string, origin: Origin): GeoJSON.Position
   ];
 }
 
-export function buildGridCells(gridIds: string[], origin: Origin): GridCell[] {
+export function buildGridCells(gridIds: string[]): GridCell[] {
   return gridIds
-    .filter((id) => {
-      const [x, y] = id.split(":").map(Number);
-      return x >= 0 && x < GRID_COLUMNS && y >= 0 && y < GRID_COLUMNS;
-    })
+    .filter(isGlobalGridId)
     .map((id) => ({
       id,
-      polygon: getGridPolygon(id, origin)
-    }));
+      polygon: getGridPolygon(id)
+    }))
+    .filter((cell) => cell.polygon.length > 0);
+}
+
+export function isGlobalGridId(gridId: string) {
+  return parseGridId(gridId) !== null;
 }
 
 export function calculateDistance(points: LocationPoint[]) {
@@ -94,4 +90,45 @@ function haversineMeters(start: LocationPoint, end: LocationPoint) {
 
 function toRadians(value: number) {
   return (value * Math.PI) / 180;
+}
+
+function toDegrees(value: number) {
+  return (value * 180) / Math.PI;
+}
+
+function clampLat(lat: number) {
+  return Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, lat));
+}
+
+function lngToMercatorX(lng: number) {
+  return EARTH_RADIUS_METERS * toRadians(lng);
+}
+
+function latToMercatorY(lat: number) {
+  const clampedLat = clampLat(lat);
+  return EARTH_RADIUS_METERS * Math.log(Math.tan(Math.PI / 4 + toRadians(clampedLat) / 2));
+}
+
+function mercatorXToLng(x: number) {
+  return toDegrees(x / EARTH_RADIUS_METERS);
+}
+
+function mercatorYToLat(y: number) {
+  return toDegrees(2 * Math.atan(Math.exp(y / EARTH_RADIUS_METERS)) - Math.PI / 2);
+}
+
+function parseGridId(gridId: string) {
+  const [prefix, x, y] = gridId.split(":");
+  const parsedX = Number(x);
+  const parsedY = Number(y);
+
+  if (
+    prefix !== GRID_ID_PREFIX ||
+    !Number.isInteger(parsedX) ||
+    !Number.isInteger(parsedY)
+  ) {
+    return null;
+  }
+
+  return { x: parsedX, y: parsedY };
 }

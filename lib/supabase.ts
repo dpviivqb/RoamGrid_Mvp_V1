@@ -1,4 +1,5 @@
 import { createClient, type PostgrestError, type SupabaseClient } from "@supabase/supabase-js";
+import { isGlobalGridId } from "@/lib/grid";
 import type { ExplorationResult, LocationPoint } from "@/lib/types";
 
 export type SupabaseSaveResult =
@@ -42,6 +43,7 @@ export async function saveResultToSupabase(
   result: ExplorationResult
 ): Promise<SupabaseSaveResult> {
   const supabase = getSupabaseClient();
+  const syncableGridIds = getSyncableGridIds(result.discoveredGridIds);
   if (!supabase) {
     return {
       ok: false,
@@ -50,7 +52,7 @@ export async function saveResultToSupabase(
     };
   }
 
-  const sessionError = await saveSession(supabase, result);
+  const sessionError = await saveSession(supabase, result, syncableGridIds.length);
   if (sessionError && !isDuplicateRowError(sessionError)) {
     return { ok: false, error: formatSupabaseError("Failed to save session", sessionError) };
   }
@@ -60,7 +62,7 @@ export async function saveResultToSupabase(
     return { ok: false, error: formatSupabaseError("Failed to save location points", pointsError) };
   }
 
-  const gridsError = await saveGrids(supabase, result.anonymousId, result.discoveredGridIds);
+  const gridsError = await saveGrids(supabase, result.anonymousId, syncableGridIds);
   if (gridsError) {
     return { ok: false, error: formatSupabaseError("Failed to save discovered grids", gridsError) };
   }
@@ -68,7 +70,11 @@ export async function saveResultToSupabase(
   return { ok: true, syncedAt: new Date().toISOString() };
 }
 
-async function saveSession(supabase: SupabaseClient, result: ExplorationResult) {
+async function saveSession(
+  supabase: SupabaseClient,
+  result: ExplorationResult,
+  discoveredGridCount: number
+) {
   const { error } = await supabase.from("exploration_sessions").insert({
     id: result.id,
     anonymous_id: result.anonymousId,
@@ -76,7 +82,7 @@ async function saveSession(supabase: SupabaseClient, result: ExplorationResult) 
     ended_at: result.endedAt,
     city_name: result.cityName,
     distance_meters: result.distanceMeters,
-    discovered_grid_count: result.discoveredGridIds.length,
+    discovered_grid_count: discoveredGridCount,
     exploration_percentage: result.explorationPercentage
   });
 
@@ -125,6 +131,10 @@ async function saveGrids(supabase: SupabaseClient, anonymousId: string, gridIds:
 
 function isDuplicateRowError(error: PostgrestError) {
   return error.code === "23505";
+}
+
+function getSyncableGridIds(gridIds: string[]) {
+  return gridIds.filter(isGlobalGridId);
 }
 
 function formatSupabaseError(label: string, error: PostgrestError) {

@@ -1,4 +1,5 @@
 import type { ExplorationResult, ExplorationSession } from "@/lib/types";
+import { isGlobalGridId } from "@/lib/grid";
 
 export const STORAGE_KEYS = {
   anonymousId: "roamgrid_anonymous_id",
@@ -51,8 +52,30 @@ export function getLastResult() {
 
 export function mergeDiscoveredGrids(gridIds: string[]) {
   const existingValue = window.localStorage.getItem(STORAGE_KEYS.discoveredGrids);
-  const existing = existingValue ? (JSON.parse(existingValue) as string[]) : [];
-  const merged = Array.from(new Set([...existing, ...gridIds]));
+  const existing = parseGridIds(existingValue);
+  const merged = Array.from(new Set([...existing, ...gridIds])).filter(isGlobalGridId);
   window.localStorage.setItem(STORAGE_KEYS.discoveredGrids, JSON.stringify(merged));
   return merged;
+}
+
+export function getDiscoveredGrids() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const value = window.localStorage.getItem(STORAGE_KEYS.discoveredGrids);
+  return parseGridIds(value).filter(isGlobalGridId);
+}
+
+function parseGridIds(value: string | null) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
 }

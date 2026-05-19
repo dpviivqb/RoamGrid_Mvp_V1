@@ -71,6 +71,12 @@ create table discovered_grids (
 - `/explore` real-time map exploration
 - `/result` session summary and share card
 
+## Grid Behavior
+
+- Exploration uses fixed global 100m grid IDs with the `g100:x:y` format.
+- Finished sessions merge newly discovered grid IDs into `localStorage` under `roamgrid_discovered_grids`.
+- `/explore` reads that local history on startup and renders previously discovered blocks. Anonymous history is device/browser-local unless a login flow is added later.
+
 ## Phone Location Testing
 
 Geolocation generally requires HTTPS or localhost. To test from a phone, expose the local dev server through a trusted tunnel, then open `/explore` on the phone and allow location access.

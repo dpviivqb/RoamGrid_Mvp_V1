@@ -62,7 +62,12 @@ export async function saveResultToSupabase(
     return { ok: false, error: formatSupabaseError("Failed to save location points", pointsError) };
   }
 
-  const gridsError = await saveGrids(supabase, result.anonymousId, syncableGridIds);
+  const gridsError = await saveGrids(
+    supabase,
+    result.anonymousId,
+    result.adminArea?.id,
+    syncableGridIds
+  );
   if (gridsError) {
     return { ok: false, error: formatSupabaseError("Failed to save discovered grids", gridsError) };
   }
@@ -81,6 +86,12 @@ async function saveSession(
     started_at: result.startedAt,
     ended_at: result.endedAt,
     city_name: result.cityName,
+    admin_area_id: result.adminArea?.id,
+    admin_area_name: result.adminArea?.localName ?? result.adminArea?.name,
+    admin_level: result.adminArea?.adminLevel,
+    admin_source: result.adminArea?.source,
+    admin_area_m2: result.adminArea?.areaM2,
+    total_grid_count: result.totalGridCount ?? result.adminArea?.totalGridCount,
     distance_meters: result.distanceMeters,
     discovered_grid_count: discoveredGridCount,
     exploration_percentage: result.explorationPercentage
@@ -111,7 +122,12 @@ async function savePoints(
   return error;
 }
 
-async function saveGrids(supabase: SupabaseClient, anonymousId: string, gridIds: string[]) {
+async function saveGrids(
+  supabase: SupabaseClient,
+  anonymousId: string,
+  adminAreaId: string | undefined,
+  gridIds: string[]
+) {
   if (gridIds.length === 0) {
     return null;
   }
@@ -121,6 +137,7 @@ async function saveGrids(supabase: SupabaseClient, anonymousId: string, gridIds:
     gridIds.map((gridId) => ({
       id: crypto.randomUUID(),
       anonymous_id: anonymousId,
+      admin_area_id: adminAreaId,
       grid_id: gridId,
       discovered_at: discoveredAt
     }))

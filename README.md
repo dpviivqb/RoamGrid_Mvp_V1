@@ -74,8 +74,10 @@ create table discovered_grids (
 ## Grid Behavior
 
 - Exploration uses fixed global 100m grid IDs with the `g100:x:y` format.
-- Finished sessions merge newly discovered grid IDs into `localStorage` under `roamgrid_discovered_grids`.
-- `/explore` reads that local history on startup and renders previously discovered blocks. Anonymous history is device/browser-local unless a login flow is added later.
+- Exploration only counts grids inside a supported real administrative boundary. The current MVP ships China ADM3 district/county GIS data from geoBoundaries `gbOpen`.
+- Finished sessions merge newly discovered grid IDs into `localStorage` under `roamgrid_admin_grid_history_v1`, grouped by administrative area.
+- `/explore` reads local history for the matched district/county and renders previously discovered blocks. Anonymous history is device/browser-local unless a login flow is added later.
+- Refresh GIS data with `npm run import:gis`.
 
 ## Phone Location Testing
 

@@ -71,6 +71,10 @@ export function calculateExplorationPercentage(
   return Math.min(100, (discoveredGridCount / totalGridCount) * 100);
 }
 
+export function calculateAdminTotalGridCount(areaM2: number) {
+  return Math.max(1, Math.round(areaM2 / (GRID_SIZE_METERS * GRID_SIZE_METERS)));
+}
+
 function haversineMeters(start: LocationPoint, end: LocationPoint) {
   const earthRadiusMeters = 6_371_000;
   const dLat = toRadians(end.lat - start.lat);

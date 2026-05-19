@@ -15,6 +15,19 @@ export type PlaceInfo = {
   };
 };
 
+export type AdminArea = {
+  id: string;
+  countryIso3: string;
+  adminLevel: string;
+  name: string;
+  localName?: string;
+  bbox: [number, number, number, number];
+  areaM2: number;
+  totalGridCount: number;
+  source: string;
+  sourceVersion: string;
+};
+
 export type ExplorationSession = {
   id: string;
   anonymousId: string;
@@ -22,6 +35,7 @@ export type ExplorationSession = {
   endedAt?: string;
   cityName: string;
   placeInfo?: PlaceInfo;
+  adminArea?: AdminArea;
   origin: {
     lat: number;
     lng: number;
@@ -30,6 +44,7 @@ export type ExplorationSession = {
   discoveredGridIds: string[];
   distanceMeters: number;
   explorationPercentage: number;
+  totalGridCount?: number;
   newlyClaimedGridCount?: number;
   mapSnapshotDataUrl?: string;
 };
@@ -42,9 +57,11 @@ export type ExplorationResult = Required<
   distanceMeters: number;
   durationSeconds: number;
   explorationPercentage: number;
+  totalGridCount?: number;
   newlyClaimedGridCount?: number;
   mapSnapshotDataUrl?: string;
   placeInfo?: PlaceInfo;
+  adminArea?: AdminArea;
   supabaseSyncError?: string;
   supabaseSyncedAt?: string;
 };

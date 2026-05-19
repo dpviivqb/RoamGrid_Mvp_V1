@@ -4,6 +4,12 @@ create table if not exists public.exploration_sessions (
   started_at timestamptz not null,
   ended_at timestamptz not null,
   city_name text,
+  admin_area_id text,
+  admin_area_name text,
+  admin_level text,
+  admin_source text,
+  admin_area_m2 double precision,
+  total_grid_count integer,
   distance_meters double precision not null default 0,
   discovered_grid_count integer not null default 0,
   exploration_percentage double precision not null default 0
@@ -20,9 +26,18 @@ create table if not exists public.location_points (
 create table if not exists public.discovered_grids (
   id uuid primary key,
   anonymous_id text not null,
+  admin_area_id text,
   grid_id text not null,
   discovered_at timestamptz not null
 );
+
+alter table public.exploration_sessions add column if not exists admin_area_id text;
+alter table public.exploration_sessions add column if not exists admin_area_name text;
+alter table public.exploration_sessions add column if not exists admin_level text;
+alter table public.exploration_sessions add column if not exists admin_source text;
+alter table public.exploration_sessions add column if not exists admin_area_m2 double precision;
+alter table public.exploration_sessions add column if not exists total_grid_count integer;
+alter table public.discovered_grids add column if not exists admin_area_id text;
 
 alter table public.exploration_sessions enable row level security;
 alter table public.location_points enable row level security;

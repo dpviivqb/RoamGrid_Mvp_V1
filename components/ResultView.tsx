@@ -67,7 +67,7 @@ export function ResultView() {
     setDownloadError(null);
 
     try {
-      const place = formatPlaceLabel(result.placeInfo, language) || result.cityName;
+      const place = getResultPlace(result, language);
       const blob = await buildShareCardImage(result, language, place);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -103,7 +103,7 @@ export function ResultView() {
   }
 
   const claimedBlocks = result.newlyClaimedGridCount ?? result.discoveredGridIds.length;
-  const place = formatPlaceLabel(result.placeInfo, language) || result.cityName;
+  const place = getResultPlace(result, language);
 
   return (
     <main className="min-h-screen overflow-hidden px-4 py-6 sm:px-6">
@@ -193,6 +193,15 @@ function ResultStat({ label, value }: { label: string; value: string }) {
       </div>
       <div className="mt-2 text-2xl font-black text-white">{value}</div>
     </div>
+  );
+}
+
+function getResultPlace(result: ExplorationResult, language: Language) {
+  return (
+    result.adminArea?.localName ??
+    result.adminArea?.name ??
+    formatPlaceLabel(result.placeInfo, language) ??
+    result.cityName
   );
 }
 

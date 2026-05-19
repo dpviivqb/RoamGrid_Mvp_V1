@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import mapboxgl from "mapbox-gl";
 import { createPulsingMarkerElement } from "@/components/PulsingMarker";
 import {
+  getAdminAreaFeatureCollection,
+  isPointInAdminArea,
+  resolveAdminArea,
+  type ResolvedAdminArea
+} from "@/lib/admin-gis";
+import {
   buildGridCells,
   calculateDistance,
   calculateExplorationPercentage,
@@ -14,9 +20,10 @@ import { formatDistance, formatDuration, formatPercentage } from "@/lib/format";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import {
   clearCurrentSession,
+  clearLegacyDiscoveredGrids,
   getAnonymousId,
-  getDiscoveredGrids,
-  mergeDiscoveredGrids,
+  getAdminDiscoveredGrids,
+  mergeAdminDiscoveredGrids,
   saveCurrentSession,
   saveLastResult
 } from "@/lib/storage";
@@ -35,12 +42,15 @@ export function ExploreMap() {
   const watchIdRef = useRef<number | null>(null);
   const lastRecordedAtRef = useRef(0);
   const sessionRef = useRef<ExplorationSession | null>(null);
+  const adminAreaRef = useRef<ResolvedAdminArea | null>(null);
   const historicalGridIdsRef = useRef<string[]>([]);
+  const resolvingAdminAreaRef = useRef(false);
   const resolvingCityRef = useRef(false);
   const unlockTimeoutRef = useRef<number | null>(null);
   const hasCenteredOnUserRef = useRef(false);
 
   const [session, setSession] = useState<ExplorationSession | null>(null);
+  const [adminArea, setAdminArea] = useState<ResolvedAdminArea["area"] | null>(null);
   const [language, setLanguage] = useState<Language>("en");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [status, setStatus] = useState("waitingLocation");
@@ -50,13 +60,29 @@ export function ExploreMap() {
 
   const stats = useMemo(() => {
     const discoveredGridCount = session?.discoveredGridIds.length ?? 0;
+    const totalGridCount = session?.totalGridCount ?? adminArea?.totalGridCount;
     return {
       distanceMeters: session?.distanceMeters ?? 0,
       discoveredGridCount,
       explorationPercentage:
-        session?.explorationPercentage ?? calculateExplorationPercentage(discoveredGridCount)
+        session?.explorationPercentage ??
+        (totalGridCount ? calculateExplorationPercentage(discoveredGridCount, totalGridCount) : 0)
     };
-  }, [session]);
+  }, [adminArea, session]);
+
+  const updateAdminBoundary = useCallback((area: ResolvedAdminArea | null) => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) {
+      return;
+    }
+
+    const source = map.getSource("admin-area") as mapboxgl.GeoJSONSource | undefined;
+    source?.setData(
+      area
+        ? getAdminAreaFeatureCollection(area)
+        : { type: "FeatureCollection", features: [] }
+    );
+  }, []);
 
   const updateMap = useCallback((nextSession: ExplorationSession | null, activeGridId?: string) => {
     const map = mapRef.current;
@@ -96,6 +122,65 @@ export function ExploreMap() {
       }))
     });
   }, []);
+
+  const applyAdminArea = useCallback(
+    (nextAdminArea: ResolvedAdminArea | null) => {
+      adminAreaRef.current = nextAdminArea;
+      setAdminArea(nextAdminArea?.area ?? null);
+      historicalGridIdsRef.current = nextAdminArea
+        ? getAdminDiscoveredGrids(nextAdminArea.area.id)
+        : [];
+      updateAdminBoundary(nextAdminArea);
+      updateMap(sessionRef.current);
+    },
+    [updateAdminBoundary, updateMap]
+  );
+
+  const resolveAdminAreaForPoint = useCallback(
+    async (point: LocationPoint) => {
+      const currentArea = adminAreaRef.current;
+      if (currentArea && isPointInAdminArea(point.lat, point.lng, currentArea)) {
+        return currentArea;
+      }
+
+      if (resolvingAdminAreaRef.current) {
+        return null;
+      }
+
+      resolvingAdminAreaRef.current = true;
+      try {
+        const resolvedArea = await resolveAdminArea(point.lat, point.lng);
+        if (!resolvedArea) {
+          applyAdminArea(null);
+          setStatus("adminAreaUnsupported");
+          return null;
+        }
+
+        const activeSession = sessionRef.current;
+        if (
+          activeSession?.adminArea &&
+          activeSession.adminArea.id !== resolvedArea.area.id &&
+          activeSession.discoveredGridIds.length > 0
+        ) {
+          mergeAdminDiscoveredGrids(
+            activeSession.adminArea.id,
+            activeSession.adminArea.localName ?? activeSession.adminArea.name,
+            activeSession.discoveredGridIds
+          );
+        }
+
+        applyAdminArea(resolvedArea);
+        return resolvedArea;
+      } catch (adminError) {
+        console.error("Failed to resolve admin area", adminError);
+        setError(t(language, "adminAreaLoadFailed"));
+        return null;
+      } finally {
+        resolvingAdminAreaRef.current = false;
+      }
+    },
+    [applyAdminArea, language]
+  );
 
   const updateUserMarker = useCallback((point: LocationPoint) => {
     const map = mapRef.current;
@@ -138,7 +223,7 @@ export function ExploreMap() {
   }, []);
 
   const handlePosition = useCallback(
-    (position: GeolocationPosition) => {
+    async (position: GeolocationPosition) => {
       const point: LocationPoint = {
         lat: position.coords.latitude,
         lng: position.coords.longitude,
@@ -157,27 +242,40 @@ export function ExploreMap() {
       }
       lastRecordedAtRef.current = now;
 
+      const matchedAdminArea = await resolveAdminAreaForPoint(point);
       const current = sessionRef.current;
       const anonymousId = getAnonymousId();
       const origin = current?.origin ?? { lat: point.lat, lng: point.lng };
-      const gridId = getGridId(point.lat, point.lng);
-      const currentGridIds = current?.discoveredGridIds ?? [];
-      const isNewGrid =
-        !historicalGridIdsRef.current.includes(gridId) && !currentGridIds.includes(gridId);
+      const currentGridIds =
+        current && current.adminArea?.id === matchedAdminArea?.area.id
+          ? current.discoveredGridIds
+          : [];
+      const gridId = matchedAdminArea ? getGridId(point.lat, point.lng) : null;
+      const isNewGrid = Boolean(
+        gridId &&
+          matchedAdminArea &&
+          !historicalGridIdsRef.current.includes(gridId) &&
+          !currentGridIds.includes(gridId)
+      );
       const points = [...(current?.points ?? []), point];
-      const discoveredGridIds = isNewGrid
+      const discoveredGridIds = isNewGrid && gridId
         ? Array.from(new Set([...currentGridIds, gridId]))
         : currentGridIds;
       const distanceMeters = calculateDistance(points);
-      const explorationPercentage = calculateExplorationPercentage(discoveredGridIds.length);
+      const totalGridCount = matchedAdminArea?.area.totalGridCount;
+      const explorationPercentage = totalGridCount
+        ? calculateExplorationPercentage(discoveredGridIds.length, totalGridCount)
+        : 0;
 
       const nextSession: ExplorationSession = current
         ? {
             ...current,
+            adminArea: matchedAdminArea?.area,
             points,
             discoveredGridIds,
             distanceMeters,
             explorationPercentage,
+            totalGridCount,
             newlyClaimedGridCount: discoveredGridIds.length
           }
         : {
@@ -185,21 +283,25 @@ export function ExploreMap() {
             anonymousId,
             startedAt: new Date().toISOString(),
             cityName: "Nearby Blocks",
+            adminArea: matchedAdminArea?.area,
             origin,
             points,
             discoveredGridIds,
             distanceMeters,
             explorationPercentage,
+            totalGridCount,
             newlyClaimedGridCount: discoveredGridIds.length
           };
 
       sessionRef.current = nextSession;
       setSession(nextSession);
       saveCurrentSession(nextSession);
-      updateMap(nextSession, isNewGrid ? gridId : undefined);
-      setStatus("explorationActive");
+      updateMap(nextSession, isNewGrid && gridId ? gridId : undefined);
+      if (matchedAdminArea) {
+        setStatus("explorationActive");
+      }
 
-      if (isNewGrid) {
+      if (isNewGrid && gridId) {
         setNewGridId(gridId);
         if (unlockTimeoutRef.current) {
           window.clearTimeout(unlockTimeoutRef.current);
@@ -222,7 +324,9 @@ export function ExploreMap() {
           sessionRef.current = updatedSession;
           setSession(updatedSession);
           saveCurrentSession(updatedSession);
-          setStatus("explorationActive");
+          if (adminAreaRef.current) {
+            setStatus("explorationActive");
+          }
         });
       }
 
@@ -230,7 +334,7 @@ export function ExploreMap() {
         centerOnUser(point, "fly");
       }
     },
-    [centerOnUser, updateMap, updateUserMarker]
+    [centerOnUser, resolveAdminAreaForPoint, updateMap, updateUserMarker]
   );
 
   useEffect(() => {
@@ -274,6 +378,32 @@ export function ExploreMap() {
       map.addSource("discovered-grids", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] }
+      });
+
+      map.addSource("admin-area", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] }
+      });
+
+      map.addLayer({
+        id: "admin-area-fill",
+        type: "fill",
+        source: "admin-area",
+        paint: {
+          "fill-color": "#14b8a6",
+          "fill-opacity": 0.08
+        }
+      });
+
+      map.addLayer({
+        id: "admin-area-outline",
+        type: "line",
+        source: "admin-area",
+        paint: {
+          "line-color": "#5eead4",
+          "line-width": 2,
+          "line-opacity": 0.8
+        }
       });
 
       map.addLayer({
@@ -378,7 +508,8 @@ export function ExploreMap() {
   }, []);
 
   useEffect(() => {
-    historicalGridIdsRef.current = getDiscoveredGrids();
+    clearLegacyDiscoveredGrids();
+    historicalGridIdsRef.current = [];
     sessionRef.current = null;
     lastRecordedAtRef.current = 0;
     resolvingCityRef.current = false;
@@ -492,7 +623,13 @@ export function ExploreMap() {
       explorationPercentage: current.explorationPercentage
     };
 
-    mergeDiscoveredGrids(result.discoveredGridIds);
+    if (current.adminArea) {
+      mergeAdminDiscoveredGrids(
+        current.adminArea.id,
+        current.adminArea.localName ?? current.adminArea.name,
+        result.discoveredGridIds
+      );
+    }
     saveLastResult(result);
     clearCurrentSession();
     const syncResult = await saveResultToSupabase(result);
@@ -505,7 +642,15 @@ export function ExploreMap() {
   }
 
   const statusMessage =
-    error ?? t(language, status as "waitingLocation" | "explorationActive" | "locationUnavailable");
+    error ??
+    t(
+      language,
+      status as
+        | "waitingLocation"
+        | "explorationActive"
+        | "locationUnavailable"
+        | "adminAreaUnsupported"
+    );
 
   return (
     <main className="explore-map relative h-[100dvh] min-h-screen w-screen overflow-hidden bg-slate-950">
@@ -521,9 +666,7 @@ export function ExploreMap() {
               RoamGrid
             </div>
             <div className="mt-1 line-clamp-2 text-base font-black leading-snug text-white sm:line-clamp-none sm:truncate sm:text-xl">
-              {t(language, "exploring", {
-                place: formatPlaceLabel(session?.placeInfo, language)
-              })}
+              {t(language, "exploring", { place: getExplorePlaceLabel(session, adminArea, language) })}
             </div>
           </div>
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
@@ -593,5 +736,19 @@ function HudCard({ label, value }: { label: string; value: string }) {
       </div>
       <div className="mt-1 truncate text-sm font-black text-white sm:text-lg">{value}</div>
     </div>
+  );
+}
+
+function getExplorePlaceLabel(
+  session: ExplorationSession | null,
+  adminArea: ResolvedAdminArea["area"] | null,
+  language: Language
+) {
+  return (
+    adminArea?.localName ??
+    adminArea?.name ??
+    session?.adminArea?.localName ??
+    session?.adminArea?.name ??
+    formatPlaceLabel(session?.placeInfo, language)
   );
 }

@@ -131,6 +131,16 @@ export function ResultView() {
             </button>
           </div>
           {downloadError ? <p className="mt-3 text-sm text-rose-200">{downloadError}</p> : null}
+          {result.supabaseSyncError ? (
+            <p className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+              {t(language, "supabaseSyncFailed", { error: result.supabaseSyncError })}
+            </p>
+          ) : null}
+          {result.supabaseSyncedAt ? (
+            <p className="mt-3 text-sm font-semibold text-teal-200">
+              {t(language, "supabaseSynced")}
+            </p>
+          ) : null}
         </section>
 
         <section className="flex items-center justify-center">

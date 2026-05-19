@@ -45,6 +45,8 @@ export type ExplorationResult = Required<
   newlyClaimedGridCount?: number;
   mapSnapshotDataUrl?: string;
   placeInfo?: PlaceInfo;
+  supabaseSyncError?: string;
+  supabaseSyncedAt?: string;
 };
 
 export type GridCell = {

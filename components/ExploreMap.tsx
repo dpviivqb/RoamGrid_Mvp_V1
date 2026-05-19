@@ -458,7 +458,12 @@ export function ExploreMap() {
     mergeDiscoveredGrids(result.discoveredGridIds);
     saveLastResult(result);
     clearCurrentSession();
-    await saveResultToSupabase(result);
+    const syncResult = await saveResultToSupabase(result);
+    saveLastResult(
+      syncResult.ok
+        ? { ...result, supabaseSyncedAt: syncResult.syncedAt }
+        : { ...result, supabaseSyncError: syncResult.error }
+    );
     router.push("/result");
   }
 

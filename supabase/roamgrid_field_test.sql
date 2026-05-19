@@ -32,6 +32,7 @@ revoke all on table public.exploration_sessions from anon, authenticated;
 revoke all on table public.location_points from anon, authenticated;
 revoke all on table public.discovered_grids from anon, authenticated;
 
+grant usage on schema public to anon;
 grant insert on table public.exploration_sessions to anon;
 grant insert on table public.location_points to anon;
 grant insert on table public.discovered_grids to anon;

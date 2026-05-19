@@ -33,7 +33,7 @@ NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 ```
 
-Use the new Supabase publishable key format (`sb_publishable_...`) for browser writes. The legacy anon key still works as a temporary fallback if it is already configured, but new deployments should use `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+`NEXT_PUBLIC_SUPABASE_URL` must be the project root URL, for example `https://your-project-ref.supabase.co`. Do not use the REST endpoint URL ending in `/rest/v1`. Use the new Supabase publishable key format (`sb_publishable_...`) for browser writes. The legacy anon key still works as a temporary fallback if it is already configured, but new deployments should use `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
 
 ## Supabase Tables
 
@@ -90,7 +90,7 @@ NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 ```
 
-RoamGrid writes field-test data from the browser with a Supabase publishable key and insert-only RLS policies. Do not add `sb_secret_...` or legacy `service_role` keys to browser-exposed variables. Secret keys bypass RLS and are only appropriate for trusted server code with its own authorization checks.
+RoamGrid writes field-test data from the browser with a Supabase publishable key and insert-only RLS policies. `NEXT_PUBLIC_SUPABASE_URL` must be the project root URL, not the Data API URL ending in `/rest/v1`. Do not add `sb_secret_...` or legacy `service_role` keys to browser-exposed variables. Secret keys bypass RLS and are only appropriate for trusted server code with its own authorization checks.
 
 5. If the Mapbox token uses URL restrictions, allow the production Vercel domain and any Preview domains you plan to test.
 6. In Supabase SQL Editor, run `supabase/roamgrid_field_test.sql` before the phone test.

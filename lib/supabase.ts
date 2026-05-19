@@ -6,7 +6,7 @@ export type SupabaseSaveResult =
   | { ok: false; error: string };
 
 function getSupabaseClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -22,6 +22,20 @@ function getSupabaseClient() {
       persistSession: false
     }
   });
+}
+
+function normalizeSupabaseUrl(value: string | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  try {
+    const url = new URL(value.trim());
+    url.pathname = url.pathname.replace(/\/rest\/v1\/?$/, "");
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return value.trim().replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
+  }
 }
 
 export async function saveResultToSupabase(

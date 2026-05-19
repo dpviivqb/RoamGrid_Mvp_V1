@@ -30,8 +30,10 @@ Supabase is optional. When these values are present, finished sessions are synce
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 ```
+
+Use the new Supabase publishable key format (`sb_publishable_...`) for browser writes. The legacy anon key still works as a temporary fallback if it is already configured, but new deployments should use `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
 
 ## Supabase Tables
 
@@ -85,15 +87,13 @@ Use the GitHub integration for the first outdoor MVP test:
 ```bash
 NEXT_PUBLIC_MAPBOX_TOKEN=your_mapbox_public_token
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is server-only and must not use the `NEXT_PUBLIC_` prefix. It is recommended for Vercel writes because the API route can save field-test data without exposing the key in the browser. If it is omitted, the API route falls back to `NEXT_PUBLIC_SUPABASE_ANON_KEY` and requires the insert-only RLS policies in `supabase/roamgrid_field_test.sql`.
+RoamGrid writes field-test data from the browser with a Supabase publishable key and insert-only RLS policies. Do not add `sb_secret_...` or legacy `service_role` keys to browser-exposed variables. Secret keys bypass RLS and are only appropriate for trusted server code with its own authorization checks.
 
 5. If the Mapbox token uses URL restrictions, allow the production Vercel domain and any Preview domains you plan to test.
 6. In Supabase SQL Editor, run `supabase/roamgrid_field_test.sql` before the phone test.
 7. Redeploy in Vercel after changing any environment variable.
-8. Open `/api/exploration-results` on the deployed site to verify the server sees the Supabase URL and write key. The response only reports booleans and never returns secrets.
 
 For the phone test, open the production HTTPS URL at `/explore`, allow browser location permission, walk outdoors for at least 200-300 meters, finish the session, then verify `/result` and the three Supabase tables contain the run data.

@@ -526,6 +526,7 @@ export function ExploreMap() {
         }
       });
 
+      updateAdminBoundary(adminAreaRef.current);
       updateMap(sessionRef.current);
     });
 

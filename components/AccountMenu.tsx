@@ -10,6 +10,7 @@ import type { Language } from "@/lib/i18n";
 type AccountMenuProps = {
   language: Language;
   compact?: boolean;
+  showEmail?: boolean;
 };
 
 const copy = {
@@ -29,7 +30,7 @@ const copy = {
   }
 } as const;
 
-export function AccountMenu({ language, compact = false }: AccountMenuProps) {
+export function AccountMenu({ language, compact = false, showEmail = true }: AccountMenuProps) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -116,16 +117,18 @@ export function AccountMenu({ language, compact = false }: AccountMenuProps) {
       <Link href="/history" className={baseClass}>
         {text.history}
       </Link>
-      <div
-        className={
-          compact
-            ? "hidden max-w-[10rem] truncate rounded-md border border-white/10 bg-black/36 px-2.5 py-2 text-xs font-semibold text-slate-200 shadow-hud backdrop-blur-md sm:block"
-            : "hidden max-w-[14rem] truncate rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-200 sm:block"
-        }
-        title={user.email}
-      >
-        {isSyncing ? text.syncing : user.email}
-      </div>
+      {showEmail ? (
+        <div
+          className={
+            compact
+              ? "hidden max-w-[10rem] truncate rounded-md border border-white/10 bg-black/36 px-2.5 py-2 text-xs font-semibold text-slate-200 shadow-hud backdrop-blur-md sm:block"
+              : "hidden max-w-[14rem] truncate rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-slate-200 sm:block"
+          }
+          title={user.email}
+        >
+          {isSyncing ? text.syncing : user.email}
+        </div>
+      ) : null}
       <button type="button" onClick={signOut} className={baseClass}>
         {text.signOut}
       </button>

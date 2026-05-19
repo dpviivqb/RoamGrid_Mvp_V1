@@ -704,27 +704,30 @@ export function ExploreMap() {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:52px_52px]" />
       {newGridId ? <div className="pointer-events-none absolute inset-0 animate-territory-flash" /> : null}
 
-      <section className="absolute left-3 right-3 top-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10 flex flex-col gap-2 sm:left-5 sm:right-5 sm:top-5 sm:gap-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-3">
-          <div className="min-w-0 rounded-md border border-teal-200/20 bg-black/32 px-3 py-2 shadow-hud backdrop-blur-md sm:max-w-[48vw]">
-            <div className="text-[11px] font-black uppercase tracking-[0.22em] text-teal-200">
-              RoamGrid
+      <section className="absolute left-3 right-3 top-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10 sm:left-5 sm:right-5 sm:top-5">
+        <div className="grid gap-2 lg:grid-cols-[minmax(18rem,32rem)_minmax(0,1fr)] lg:items-start lg:gap-3">
+          <div className="flex min-w-0 flex-col gap-2">
+            <div className="min-w-0 rounded-md border border-teal-200/20 bg-black/32 px-3 py-2 shadow-hud backdrop-blur-md">
+              <div className="text-[11px] font-black uppercase tracking-[0.22em] text-teal-200">
+                RoamGrid
+              </div>
+              <div className="mt-1 line-clamp-2 text-base font-black leading-snug text-white sm:line-clamp-none sm:truncate sm:text-xl">
+                {t(language, "exploring", { place: getExplorePlaceLabel(session, adminArea, language) })}
+              </div>
             </div>
-            <div className="mt-1 line-clamp-2 text-base font-black leading-snug text-white sm:line-clamp-none sm:truncate sm:text-xl">
-              {t(language, "exploring", { place: getExplorePlaceLabel(session, adminArea, language) })}
+            <div className="min-w-0 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md lg:max-w-md">
+              <div className="truncate">{statusMessage}</div>
             </div>
           </div>
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-            <div className="grid min-w-0 grid-cols-4 gap-1.5 sm:gap-2">
+
+          <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-start lg:justify-end">
+            <div className="grid w-full min-w-0 grid-cols-4 gap-1.5 sm:gap-2 lg:w-auto">
               <HudCard label={t(language, "time")} value={formatDuration(elapsedSeconds)} />
               <HudCard label={t(language, "dist")} value={formatDistance(stats.distanceMeters)} />
               <HudCard label={t(language, "map")} value={formatPercentage(stats.explorationPercentage)} />
               <HudCard label={t(language, "blocks")} value={String(stats.discoveredGridCount)} />
             </div>
-            <div className="flex items-start gap-2 sm:flex">
-              <div className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md sm:hidden">
-                <div className="truncate">{statusMessage}</div>
-              </div>
+            <div className="flex min-w-0 flex-wrap items-start justify-end gap-2">
               <LanguageToggle
                 language={language}
                 onChange={(nextLanguage) => {
@@ -737,10 +740,6 @@ export function ExploreMap() {
           </div>
         </div>
       </section>
-
-      <div className="absolute left-5 top-24 z-10 hidden max-w-md rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md sm:block">
-        <div>{statusMessage}</div>
-      </div>
 
       {error && !mapboxToken ? (
         <div className="absolute inset-0 z-20 grid place-items-center bg-slate-950/92 px-6 text-center">

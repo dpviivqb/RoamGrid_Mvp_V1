@@ -64,7 +64,18 @@ export function getDiscoveredGrids() {
   }
 
   const value = window.localStorage.getItem(STORAGE_KEYS.discoveredGrids);
-  return parseGridIds(value).filter(isGlobalGridId);
+  const gridIds = parseGridIds(value);
+  const globalGridIds = gridIds.filter(isGlobalGridId);
+
+  if (gridIds.length !== globalGridIds.length) {
+    if (globalGridIds.length === 0) {
+      window.localStorage.removeItem(STORAGE_KEYS.discoveredGrids);
+    } else {
+      window.localStorage.setItem(STORAGE_KEYS.discoveredGrids, JSON.stringify(globalGridIds));
+    }
+  }
+
+  return globalGridIds;
 }
 
 function parseGridIds(value: string | null) {

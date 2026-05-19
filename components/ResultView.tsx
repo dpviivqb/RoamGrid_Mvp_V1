@@ -110,17 +110,18 @@ export function ResultView() {
 
   return (
     <main className="min-h-screen overflow-hidden px-4 py-6 sm:px-6">
+      <header className="mx-auto mb-8 flex max-w-6xl items-start justify-between gap-4">
+        <Link href="/" className="pt-3 text-sm font-bold tracking-[0.18em] text-teal-200">
+          ROAMGRID
+        </Link>
+        <div className="flex min-w-0 flex-wrap items-start justify-end gap-2">
+          <AccountMenu language={language} compact />
+          <LanguageToggle language={language} onChange={handleLanguageChange} />
+        </div>
+      </header>
+
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[0.88fr_1.12fr]">
         <section className="flex flex-col justify-center py-4">
-          <div className="mb-8 grid gap-3 sm:grid-cols-[auto_1fr] sm:items-start">
-            <Link href="/" className="text-sm font-bold tracking-[0.18em] text-teal-200 sm:pt-3">
-              ROAMGRID
-            </Link>
-            <div className="flex min-w-0 flex-wrap items-start justify-start gap-2 sm:justify-end">
-              <AccountMenu language={language} compact showEmail={false} />
-              <LanguageToggle language={language} onChange={handleLanguageChange} />
-            </div>
-          </div>
           <p className="text-sm font-black uppercase tracking-[0.24em] text-teal-200">
             {t(language, "missionComplete")}
           </p>

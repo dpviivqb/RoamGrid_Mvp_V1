@@ -58,6 +58,8 @@ export function ExploreMap() {
   const [status, setStatus] = useState("waitingLocation");
   const [error, setError] = useState<string | null>(null);
   const [historySyncError, setHistorySyncError] = useState<string | null>(null);
+  const [showAdminBoundary, setShowAdminBoundary] = useState(false);
+  const [isFinishPromptOpen, setIsFinishPromptOpen] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
   const [newGridId, setNewGridId] = useState<string | null>(null);
 
@@ -133,7 +135,7 @@ export function ExploreMap() {
       adminAreaRef.current = nextAdminArea;
       setAdminArea(nextAdminArea?.area ?? null);
       historicalGridIdsRef.current = nextAdminArea ? getAdminDiscoveredGrids(nextAdminArea.area.id) : [];
-      updateAdminBoundary(nextAdminArea);
+      updateAdminBoundary(showAdminBoundary ? nextAdminArea : null);
       updateMap(sessionRef.current);
 
       if (!nextAdminArea) {
@@ -168,7 +170,7 @@ export function ExploreMap() {
         updateMap(sessionRef.current);
       }
     },
-    [language, updateAdminBoundary, updateMap]
+    [language, showAdminBoundary, updateAdminBoundary, updateMap]
   );
 
   const resolveAdminAreaForPoint = useCallback(
@@ -256,6 +258,42 @@ export function ExploreMap() {
 
     map.flyTo({ ...camera, speed: 1.1, essential: true });
   }, []);
+
+  const fitAdminAreaOnMap = useCallback((area: ResolvedAdminArea) => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    const [minLng, minLat, maxLng, maxLat] = area.area.bbox;
+    map.fitBounds(
+      [
+        [minLng, minLat],
+        [maxLng, maxLat]
+      ],
+      {
+        duration: 650,
+        maxZoom: 12.5,
+        padding: { top: 170, right: 80, bottom: 130, left: 80 }
+      }
+    );
+  }, []);
+
+  const toggleAdminBoundary = useCallback(() => {
+    const nextValue = !showAdminBoundary;
+    setShowAdminBoundary(nextValue);
+    updateAdminBoundary(nextValue ? adminAreaRef.current : null);
+
+    if (nextValue && adminAreaRef.current) {
+      fitAdminAreaOnMap(adminAreaRef.current);
+      return;
+    }
+
+    const latestPoint = sessionRef.current?.points.at(-1);
+    if (latestPoint) {
+      centerOnUser(latestPoint, "fly");
+    }
+  }, [centerOnUser, fitAdminAreaOnMap, showAdminBoundary, updateAdminBoundary]);
 
   const handlePosition = useCallback(
     async (position: GeolocationPosition) => {
@@ -526,7 +564,7 @@ export function ExploreMap() {
         }
       });
 
-      updateAdminBoundary(adminAreaRef.current);
+      updateAdminBoundary(showAdminBoundary ? adminAreaRef.current : null);
       updateMap(sessionRef.current);
     });
 
@@ -611,6 +649,10 @@ export function ExploreMap() {
   }, [language]);
 
   useEffect(() => {
+    updateAdminBoundary(showAdminBoundary ? adminAreaRef.current : null);
+  }, [showAdminBoundary, updateAdminBoundary]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       const current = sessionRef.current;
       if (!current) {
@@ -625,7 +667,17 @@ export function ExploreMap() {
     return () => window.clearInterval(timer);
   }, []);
 
-  async function finishExploration() {
+  function openFinishPrompt() {
+    const current = sessionRef.current;
+    if (!current || current.points.length === 0) {
+      setError(t(language, "noPoints"));
+      return;
+    }
+
+    setIsFinishPromptOpen(true);
+  }
+
+  async function finishExploration(shouldSave: boolean) {
     const current = sessionRef.current;
     if (!current || current.points.length === 0) {
       setError(t(language, "noPoints"));
@@ -636,6 +688,14 @@ export function ExploreMap() {
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
+    }
+
+    if (!shouldSave) {
+      clearCurrentSession();
+      sessionRef.current = null;
+      setSession(null);
+      router.push("/");
+      return;
     }
 
     const endedAt = new Date().toISOString();
@@ -729,6 +789,17 @@ export function ExploreMap() {
               <HudCard label={t(language, "blocks")} value={String(stats.discoveredGridCount)} />
             </div>
             <div className="flex min-w-0 flex-wrap items-start justify-end gap-2">
+              <button
+                type="button"
+                onClick={toggleAdminBoundary}
+                className={
+                  showAdminBoundary
+                    ? "rounded-md bg-teal-300 px-2.5 py-2 text-xs font-black text-slate-950 shadow-glow"
+                    : "rounded-md border border-white/10 bg-black/40 px-2.5 py-2 text-xs font-bold text-slate-100 shadow-hud backdrop-blur-md transition hover:bg-white/10"
+                }
+              >
+                {language === "zh" ? "区界" : "Area"}
+              </button>
               <LanguageToggle
                 language={language}
                 onChange={(nextLanguage) => {
@@ -763,13 +834,54 @@ export function ExploreMap() {
       <div className="absolute bottom-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] left-3 right-3 z-10 sm:bottom-5 sm:left-1/2 sm:right-auto sm:w-[360px] sm:-translate-x-1/2">
         <button
           type="button"
-          onClick={finishExploration}
+          onClick={openFinishPrompt}
           disabled={isFinishing}
           className="w-full rounded-lg bg-teal-300 px-5 py-4 text-base font-black text-slate-950 shadow-glow transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isFinishing ? t(language, "saving") : t(language, "finishExploration")}
         </button>
       </div>
+
+      {isFinishPromptOpen ? (
+        <div className="absolute inset-0 z-30 grid place-items-center bg-slate-950/70 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-white/10 bg-slate-950 p-5 shadow-hud">
+            <h2 className="text-2xl font-black text-white">
+              {language === "zh" ? "保存本次探索？" : "Save this exploration?"}
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              {language === "zh"
+                ? "技术测试时可以丢弃无效记录。保存后会写入本地历史和 Supabase；不保存会清除本次轨迹。"
+                : "For technical tests, discard invalid runs. Saving writes this session to local history and Supabase; discarding clears this route."}
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <button
+                type="button"
+                onClick={() => void finishExploration(true)}
+                disabled={isFinishing}
+                className="rounded-lg bg-teal-300 px-4 py-3 font-black text-slate-950 shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {language === "zh" ? "保存" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void finishExploration(false)}
+                disabled={isFinishing}
+                className="rounded-lg border border-rose-200/20 bg-rose-300/10 px-4 py-3 font-bold text-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {language === "zh" ? "不保存" : "Discard"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFinishPromptOpen(false)}
+                disabled={isFinishing}
+                className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {language === "zh" ? "继续探索" : "Continue"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -48,6 +48,9 @@ export function ExploreMap() {
   const resolvingAdminAreaRef = useRef(false);
   const resolvingCityRef = useRef(false);
   const unlockTimeoutRef = useRef<number | null>(null);
+  const locationRetryTimeoutRef = useRef<number | null>(null);
+  const requestCurrentPositionRef = useRef<(() => void) | null>(null);
+  const hasReceivedPositionRef = useRef(false);
   const hasCenteredOnUserRef = useRef(false);
   const remoteHistoryRequestRef = useRef(0);
 
@@ -58,6 +61,7 @@ export function ExploreMap() {
   const [status, setStatus] = useState("waitingLocation");
   const [error, setError] = useState<string | null>(null);
   const [historySyncError, setHistorySyncError] = useState<string | null>(null);
+  const [canRetryLocation, setCanRetryLocation] = useState(false);
   const [showAdminBoundary, setShowAdminBoundary] = useState(false);
   const [isFinishPromptOpen, setIsFinishPromptOpen] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
@@ -297,6 +301,14 @@ export function ExploreMap() {
 
   const handlePosition = useCallback(
     async (position: GeolocationPosition) => {
+      hasReceivedPositionRef.current = true;
+      setCanRetryLocation(false);
+      if (locationRetryTimeoutRef.current) {
+        window.clearTimeout(locationRetryTimeoutRef.current);
+        locationRetryTimeoutRef.current = null;
+      }
+      setError(null);
+
       const point: LocationPoint = {
         lat: position.coords.latitude,
         lng: position.coords.longitude,
@@ -409,6 +421,58 @@ export function ExploreMap() {
     },
     [centerOnUser, resolveAdminAreaForPoint, updateMap, updateUserMarker]
   );
+
+  const scheduleLocationRetry = useCallback(() => {
+    if (locationRetryTimeoutRef.current) {
+      return;
+    }
+
+    locationRetryTimeoutRef.current = window.setTimeout(() => {
+      locationRetryTimeoutRef.current = null;
+      requestCurrentPositionRef.current?.();
+    }, 3000);
+  }, []);
+
+  const handleLocationError = useCallback(
+    (geoError: GeolocationPositionError) => {
+      if (geoError.code === geoError.PERMISSION_DENIED) {
+        setError(t(language, "locationDenied"));
+        setStatus("locationUnavailable");
+        setCanRetryLocation(true);
+        return;
+      }
+
+      if (hasReceivedPositionRef.current) {
+        scheduleLocationRetry();
+        return;
+      }
+
+      setError(t(language, "locationRetrying"));
+      setStatus("waitingLocation");
+      setCanRetryLocation(true);
+      scheduleLocationRetry();
+    },
+    [language, scheduleLocationRetry]
+  );
+
+  const requestCurrentPosition = useCallback(() => {
+    if (!("geolocation" in navigator)) {
+      setError(t(language, "geolocationUnavailable"));
+      setStatus("locationUnavailable");
+      setCanRetryLocation(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(handlePosition, handleLocationError, {
+      enableHighAccuracy: true,
+      maximumAge: 10000,
+      timeout: 20000
+    });
+  }, [handleLocationError, handlePosition, language]);
+
+  useEffect(() => {
+    requestCurrentPositionRef.current = requestCurrentPosition;
+  }, [requestCurrentPosition]);
 
   useEffect(() => {
     if (!mapboxToken) {
@@ -572,6 +636,10 @@ export function ExploreMap() {
       if (unlockTimeoutRef.current) {
         window.clearTimeout(unlockTimeoutRef.current);
       }
+      if (locationRetryTimeoutRef.current) {
+        window.clearTimeout(locationRetryTimeoutRef.current);
+        locationRetryTimeoutRef.current = null;
+      }
       markerRef.current?.remove();
       markerRef.current = null;
       map.remove();
@@ -595,38 +663,18 @@ export function ExploreMap() {
     if (!mapboxToken || !("geolocation" in navigator)) {
       if (!("geolocation" in navigator)) {
         setError(t(language, "geolocationUnavailable"));
+        setStatus("locationUnavailable");
+        setCanRetryLocation(false);
       }
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      handlePosition,
-      (geoError) => {
-        setError(
-          geoError.code === geoError.PERMISSION_DENIED
-            ? t(language, "locationDenied")
-            : geoError.message
-        );
-        setStatus("locationUnavailable");
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 12000
-      }
-    );
+    requestCurrentPosition();
 
-    watchIdRef.current = navigator.geolocation.watchPosition(handlePosition, (geoError) => {
-      setError(
-        geoError.code === geoError.PERMISSION_DENIED
-          ? t(language, "locationDenied")
-          : geoError.message
-      );
-      setStatus("locationUnavailable");
-    }, {
+    watchIdRef.current = navigator.geolocation.watchPosition(handlePosition, handleLocationError, {
       enableHighAccuracy: true,
-      maximumAge: 1000,
-      timeout: 15000
+      maximumAge: 10000,
+      timeout: 30000
     });
 
     return () => {
@@ -634,8 +682,19 @@ export function ExploreMap() {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
+      if (locationRetryTimeoutRef.current) {
+        window.clearTimeout(locationRetryTimeoutRef.current);
+        locationRetryTimeoutRef.current = null;
+      }
     };
-  }, [handlePosition, language]);
+  }, [handleLocationError, handlePosition, language, requestCurrentPosition]);
+
+  function retryLocation() {
+    setCanRetryLocation(false);
+    setError(t(language, "locationRetrying"));
+    setStatus("waitingLocation");
+    requestCurrentPosition();
+  }
 
   useEffect(() => {
     setLanguage(getInitialLanguage());
@@ -777,7 +836,18 @@ export function ExploreMap() {
               </div>
             </div>
             <div className="min-w-0 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-slate-200 shadow-hud backdrop-blur-md lg:max-w-md">
-              <div className="truncate">{statusMessage}</div>
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="truncate">{statusMessage}</div>
+                {canRetryLocation ? (
+                  <button
+                    type="button"
+                    onClick={retryLocation}
+                    className="shrink-0 rounded-md border border-teal-200/20 bg-teal-300/12 px-2 py-1 text-[11px] font-black text-teal-100 transition hover:bg-teal-300/20"
+                  >
+                    {t(language, "retryLocation")}
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
 

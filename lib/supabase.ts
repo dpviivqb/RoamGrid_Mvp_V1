@@ -2,10 +2,13 @@ import { createClient, type PostgrestError, type SupabaseClient } from "@supabas
 import { isGlobalGridId } from "@/lib/grid";
 import { buildPlaceHierarchy, buildResultPlaceHierarchy } from "@/lib/history";
 import {
+  deleteLocalExplorationResult,
   getAllAdminGridHistory,
   getAnonymousId,
+  getLocalExplorationHistory,
   hasMergedLocalHistoryForUser,
-  markLocalHistoryMergedForUser
+  markLocalHistoryMergedForUser,
+  saveExplorationHistory
 } from "@/lib/storage";
 import type {
   AuthUser,
@@ -161,6 +164,81 @@ export async function syncLocalAdminGridHistoryToSupabase(): Promise<SupabaseDat
 
   markLocalHistoryMergedForUser(authUser.id);
   return { ok: true, data: rows.length };
+}
+
+export async function syncLocalHistoryToSupabase(): Promise<SupabaseDataResult<number>> {
+  const explorationSync = await syncLocalExplorationHistoryToSupabase();
+  if (!explorationSync.ok) {
+    return explorationSync;
+  }
+
+  const gridSync = await syncLocalAdminGridHistoryToSupabase();
+  if (!gridSync.ok) {
+    return gridSync;
+  }
+
+  return { ok: true, data: explorationSync.data + gridSync.data };
+}
+
+export async function syncLocalExplorationHistoryToSupabase(): Promise<SupabaseDataResult<number>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase is not configured.", reason: "not_configured" };
+  }
+
+  const authUser = await getCurrentAuthUser();
+  if (!authUser) {
+    return { ok: false, error: "Sign in to sync local history.", reason: "not_authenticated" };
+  }
+
+  const localHistory = getLocalExplorationHistory();
+  if (localHistory.length === 0) {
+    return { ok: true, data: 0 };
+  }
+
+  let syncedCount = 0;
+
+  for (const localResult of localHistory) {
+    if (localResult.userId === authUser.id && localResult.supabaseSyncedAt) {
+      continue;
+    }
+
+    const shouldKeepSessionId =
+      localResult.userId === authUser.id && localResult.syncMode === "authenticated";
+    const remoteSessionId = shouldKeepSessionId ? localResult.id : crypto.randomUUID();
+    const alreadyExists = await getRemoteSessionExists(supabase, authUser.id, remoteSessionId);
+    if (!alreadyExists.ok) {
+      return { ok: false, error: formatSupabaseError("Failed to check remote history", alreadyExists.error) };
+    }
+
+    const resultForSync: ExplorationResult = {
+      ...localResult,
+      id: remoteSessionId,
+      userId: authUser.id,
+      syncMode: "authenticated",
+      supabaseSyncError: undefined,
+      supabaseSyncedAt: undefined
+    };
+
+    if (!alreadyExists.data) {
+      const syncResult = await saveResultToSupabase(resultForSync);
+      if (!syncResult.ok) {
+        return { ok: false, error: syncResult.error };
+      }
+
+      resultForSync.supabaseSyncedAt = syncResult.syncedAt;
+      syncedCount += 1;
+    } else {
+      resultForSync.supabaseSyncedAt = new Date().toISOString();
+    }
+
+    if (localResult.id !== resultForSync.id) {
+      deleteLocalExplorationResult(localResult.id);
+    }
+    saveExplorationHistory(resultForSync);
+  }
+
+  return { ok: true, data: syncedCount };
 }
 
 export async function getRemoteAdminDiscoveredGrids(
@@ -500,6 +578,25 @@ async function fetchHistorySession(
   }
 
   return { ok: true, data: data as unknown as SessionHistoryRow | null };
+}
+
+async function getRemoteSessionExists(
+  supabase: SupabaseClient,
+  userId: string,
+  sessionId: string
+): Promise<{ ok: true; data: boolean } | { ok: false; error: PostgrestError }> {
+  const { data, error } = await supabase
+    .from("exploration_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error };
+  }
+
+  return { ok: true, data: Boolean(data) };
 }
 
 function buildHistorySummaryFromSession(

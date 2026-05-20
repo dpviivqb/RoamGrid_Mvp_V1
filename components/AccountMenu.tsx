@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
-import { getSupabaseBrowserClient, syncLocalAdminGridHistoryToSupabase } from "@/lib/supabase";
+import { getSupabaseBrowserClient, syncLocalHistoryToSupabase } from "@/lib/supabase";
 import type { AuthUser } from "@/lib/types";
 import type { Language } from "@/lib/i18n";
 
@@ -59,7 +59,7 @@ export function AccountMenu({ language, compact = false, showEmail = true }: Acc
       if (nextUser) {
         setIsSyncing(true);
         setSyncError(null);
-        void syncLocalAdminGridHistoryToSupabase()
+        void syncLocalHistoryToSupabase()
           .then((result) => {
             if (!isMounted || result.ok || result.reason === "not_authenticated") {
               return;

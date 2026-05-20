@@ -8,7 +8,7 @@ import { getInitialLanguage, saveLanguage, type Language } from "@/lib/i18n";
 import {
   getSupabaseBrowserClient,
   isSupabaseConfigured,
-  syncLocalAdminGridHistoryToSupabase
+  syncLocalHistoryToSupabase
 } from "@/lib/supabase";
 
 type AuthMode = "login" | "register" | "reset";
@@ -141,7 +141,7 @@ export function AuthView() {
   }
 
   async function syncAndContinue() {
-    const syncResult = await syncLocalAdminGridHistoryToSupabase();
+    const syncResult = await syncLocalHistoryToSupabase();
     if (!syncResult.ok && syncResult.reason !== "not_authenticated") {
       setError(copy[language].syncFailed.replace("{error}", syncResult.error));
       return;

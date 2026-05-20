@@ -48,6 +48,16 @@ type AreaTransition = {
   to: string;
 };
 
+type CameraMoveMode = "jump" | "fly" | "ease";
+type MapPerspective = "bird" | "top";
+type ViewScope = "user" | "adminArea";
+
+const USER_VIEW_ZOOM = 16;
+const BIRD_PITCH = 45;
+const BIRD_BEARING = -12;
+const TOP_PITCH = 0;
+const TOP_BEARING = 0;
+
 export function ExploreMap() {
   const router = useRouter();
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -63,10 +73,15 @@ export function ExploreMap() {
   const unlockTimeoutRef = useRef<number | null>(null);
   const areaTransitionTimeoutRef = useRef<number | null>(null);
   const locationRetryTimeoutRef = useRef<number | null>(null);
+  const cameraMoveTimeoutRef = useRef<number | null>(null);
+  const programmaticCameraMoveRef = useRef(false);
   const requestCurrentPositionRef = useRef<(() => void) | null>(null);
   const hasReceivedPositionRef = useRef(false);
   const hasCenteredOnUserRef = useRef(false);
   const remoteHistoryRequestRef = useRef(0);
+  const viewScopeRef = useRef<ViewScope>("user");
+  const perspectiveRef = useRef<MapPerspective>("bird");
+  const isFollowingUserRef = useRef(true);
 
   const [session, setSession] = useState<ExplorationSession | null>(null);
   const [adminArea, setAdminArea] = useState<ResolvedAdminArea["area"] | null>(null);
@@ -76,11 +91,14 @@ export function ExploreMap() {
   const [error, setError] = useState<string | null>(null);
   const [historySyncError, setHistorySyncError] = useState<string | null>(null);
   const [canRetryLocation, setCanRetryLocation] = useState(false);
-  const [showAdminBoundary, setShowAdminBoundary] = useState(false);
+  const [viewScope, setViewScope] = useState<ViewScope>("user");
+  const [perspective, setPerspective] = useState<MapPerspective>("bird");
+  const [isFollowingUser, setIsFollowingUser] = useState(true);
   const [isFinishPromptOpen, setIsFinishPromptOpen] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
   const [newGridId, setNewGridId] = useState<string | null>(null);
   const [areaTransition, setAreaTransition] = useState<AreaTransition | null>(null);
+  const showAdminBoundary = viewScope === "adminArea";
 
   const stats = useMemo(() => {
     const discoveredGridCount = session?.discoveredGridIds.length ?? 0;
@@ -154,6 +172,133 @@ export function ExploreMap() {
     });
   }, []);
 
+  const markProgrammaticCameraMove = useCallback((duration = 700) => {
+    programmaticCameraMoveRef.current = true;
+    if (cameraMoveTimeoutRef.current) {
+      window.clearTimeout(cameraMoveTimeoutRef.current);
+    }
+    cameraMoveTimeoutRef.current = window.setTimeout(() => {
+      programmaticCameraMoveRef.current = false;
+      cameraMoveTimeoutRef.current = null;
+    }, duration + 250);
+  }, []);
+
+  const moveToUserPoint = useCallback(
+    (point: LocationPoint, mode: CameraMoveMode, nextPerspective = perspectiveRef.current) => {
+      const map = mapRef.current;
+      if (!map) {
+        return;
+      }
+
+      viewScopeRef.current = "user";
+      isFollowingUserRef.current = true;
+      setViewScope("user");
+      setIsFollowingUser(true);
+      updateAdminBoundary(null);
+
+      const camera = {
+        center: [point.lng, point.lat] as [number, number],
+        zoom: USER_VIEW_ZOOM,
+        ...getCameraOrientation(nextPerspective)
+      };
+
+      if (mode === "jump") {
+        markProgrammaticCameraMove(0);
+        map.jumpTo(camera);
+        return;
+      }
+
+      if (mode === "ease") {
+        markProgrammaticCameraMove(450);
+        map.easeTo({ ...camera, duration: 450, essential: true });
+        return;
+      }
+
+      markProgrammaticCameraMove(700);
+      map.flyTo({ ...camera, speed: 1.1, essential: true });
+    },
+    [markProgrammaticCameraMove, updateAdminBoundary]
+  );
+
+  const moveToUserView = useCallback(
+    (mode: CameraMoveMode) => {
+      const latestPoint = sessionRef.current?.points.at(-1);
+      if (latestPoint) {
+        moveToUserPoint(latestPoint, mode);
+      }
+    },
+    [moveToUserPoint]
+  );
+
+  const moveToAdminAreaView = useCallback(
+    (
+      mode: Exclude<CameraMoveMode, "jump">,
+      area = adminAreaRef.current,
+      nextPerspective = perspectiveRef.current
+    ) => {
+      const map = mapRef.current;
+      if (!map || !area) {
+        return;
+      }
+
+      viewScopeRef.current = "adminArea";
+      isFollowingUserRef.current = false;
+      setViewScope("adminArea");
+      setIsFollowingUser(false);
+      updateAdminBoundary(area);
+
+      const [minLng, minLat, maxLng, maxLat] = area.area.bbox;
+      markProgrammaticCameraMove(mode === "ease" ? 550 : 800);
+      map.fitBounds(
+        [
+          [minLng, minLat],
+          [maxLng, maxLat]
+        ],
+        {
+          duration: mode === "ease" ? 550 : 650,
+          maxZoom: 12.5,
+          padding: { top: 170, right: 86, bottom: 130, left: 80 },
+          ...getCameraOrientation(nextPerspective)
+        }
+      );
+    },
+    [markProgrammaticCameraMove, updateAdminBoundary]
+  );
+
+  const applyPerspective = useCallback(
+    (nextPerspective: MapPerspective) => {
+      const map = mapRef.current;
+      perspectiveRef.current = nextPerspective;
+      setPerspective(nextPerspective);
+
+      if (!map) {
+        return;
+      }
+
+      if (viewScopeRef.current === "adminArea" && adminAreaRef.current) {
+        moveToAdminAreaView("ease", adminAreaRef.current, nextPerspective);
+        return;
+      }
+
+      markProgrammaticCameraMove(450);
+      map.easeTo({
+        ...getCameraOrientation(nextPerspective),
+        duration: 450,
+        essential: true
+      });
+    },
+    [markProgrammaticCameraMove, moveToAdminAreaView]
+  );
+
+  const toggleAdminAreaView = useCallback(() => {
+    if (viewScopeRef.current === "adminArea") {
+      moveToUserView("fly");
+      return;
+    }
+
+    moveToAdminAreaView("fly");
+  }, [moveToAdminAreaView, moveToUserView]);
+
   const applyAdminArea = useCallback(
     async (nextAdminArea: ResolvedAdminArea | null) => {
       const requestId = remoteHistoryRequestRef.current + 1;
@@ -161,10 +306,17 @@ export function ExploreMap() {
       adminAreaRef.current = nextAdminArea;
       setAdminArea(nextAdminArea?.area ?? null);
       historicalGridIdsRef.current = nextAdminArea ? getAdminDiscoveredGrids(nextAdminArea.area.id) : [];
-      updateAdminBoundary(showAdminBoundary ? nextAdminArea : null);
+      updateAdminBoundary(viewScopeRef.current === "adminArea" ? nextAdminArea : null);
+      if (viewScopeRef.current === "adminArea" && nextAdminArea) {
+        moveToAdminAreaView("fly", nextAdminArea);
+      }
       updateMap(sessionRef.current);
 
       if (!nextAdminArea) {
+        if (viewScopeRef.current === "adminArea") {
+          viewScopeRef.current = "user";
+          setViewScope("user");
+        }
         setHistorySyncError(null);
         return;
       }
@@ -196,7 +348,7 @@ export function ExploreMap() {
         updateMap(sessionRef.current);
       }
     },
-    [language, showAdminBoundary, updateAdminBoundary, updateMap]
+    [language, moveToAdminAreaView, updateAdminBoundary, updateMap]
   );
 
   const resolveAdminAreaForPoint = useCallback(
@@ -275,63 +427,6 @@ export function ExploreMap() {
     markerRef.current.setLngLat([point.lng, point.lat]);
   }, []);
 
-  const centerOnUser = useCallback((point: LocationPoint, mode: "jump" | "fly") => {
-    const map = mapRef.current;
-    if (!map) {
-      return;
-    }
-
-    const camera = {
-      center: [point.lng, point.lat] as [number, number],
-      zoom: Math.max(map.getZoom(), 16),
-      pitch: 45,
-      bearing: map.getBearing()
-    };
-
-    if (mode === "jump") {
-      map.jumpTo(camera);
-      return;
-    }
-
-    map.flyTo({ ...camera, speed: 1.1, essential: true });
-  }, []);
-
-  const fitAdminAreaOnMap = useCallback((area: ResolvedAdminArea) => {
-    const map = mapRef.current;
-    if (!map) {
-      return;
-    }
-
-    const [minLng, minLat, maxLng, maxLat] = area.area.bbox;
-    map.fitBounds(
-      [
-        [minLng, minLat],
-        [maxLng, maxLat]
-      ],
-      {
-        duration: 650,
-        maxZoom: 12.5,
-        padding: { top: 170, right: 80, bottom: 130, left: 80 }
-      }
-    );
-  }, []);
-
-  const toggleAdminBoundary = useCallback(() => {
-    const nextValue = !showAdminBoundary;
-    setShowAdminBoundary(nextValue);
-    updateAdminBoundary(nextValue ? adminAreaRef.current : null);
-
-    if (nextValue && adminAreaRef.current) {
-      fitAdminAreaOnMap(adminAreaRef.current);
-      return;
-    }
-
-    const latestPoint = sessionRef.current?.points.at(-1);
-    if (latestPoint) {
-      centerOnUser(latestPoint, "fly");
-    }
-  }, [centerOnUser, fitAdminAreaOnMap, showAdminBoundary, updateAdminBoundary]);
-
   const handlePosition = useCallback(
     async (position: GeolocationPosition) => {
       hasReceivedPositionRef.current = true;
@@ -350,8 +445,10 @@ export function ExploreMap() {
 
       updateUserMarker(point);
       if (!hasCenteredOnUserRef.current) {
-        centerOnUser(point, "jump");
+        moveToUserPoint(point, "jump");
         hasCenteredOnUserRef.current = true;
+      } else if (isFollowingUserRef.current && viewScopeRef.current === "user") {
+        moveToUserPoint(point, "ease");
       }
 
       const now = Date.now();
@@ -448,11 +545,8 @@ export function ExploreMap() {
         });
       }
 
-      if (mapRef.current && nextSession.points.length <= 2) {
-        centerOnUser(point, "fly");
-      }
     },
-    [centerOnUser, resolveAdminAreaForPoint, updateMap, updateUserMarker]
+    [moveToUserPoint, resolveAdminAreaForPoint, updateMap, updateUserMarker]
   );
 
   const scheduleLocationRetry = useCallback(() => {
@@ -523,8 +617,8 @@ export function ExploreMap() {
       style: "mapbox://styles/mapbox/dark-v11",
       center: [0, 0],
       zoom: 14,
-      pitch: 45,
-      bearing: -12,
+      pitch: BIRD_PITCH,
+      bearing: BIRD_BEARING,
       preserveDrawingBuffer: true
     });
 
@@ -532,7 +626,20 @@ export function ExploreMap() {
     map.on("error", (event) => {
       console.error("Mapbox error", event.error);
     });
-    map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "bottom-right");
+
+    const pauseFollowingForManualCamera = () => {
+      if (programmaticCameraMoveRef.current) {
+        return;
+      }
+
+      isFollowingUserRef.current = false;
+      setIsFollowingUser(false);
+    };
+
+    map.on("dragstart", pauseFollowingForManualCamera);
+    map.on("zoomstart", pauseFollowingForManualCamera);
+    map.on("rotatestart", pauseFollowingForManualCamera);
+    map.on("pitchstart", pauseFollowingForManualCamera);
 
     map.on("load", () => {
       applyMapLanguage(map, language);
@@ -703,6 +810,10 @@ export function ExploreMap() {
         window.clearTimeout(locationRetryTimeoutRef.current);
         locationRetryTimeoutRef.current = null;
       }
+      if (cameraMoveTimeoutRef.current) {
+        window.clearTimeout(cameraMoveTimeoutRef.current);
+        cameraMoveTimeoutRef.current = null;
+      }
       markerRef.current?.remove();
       markerRef.current = null;
       map.remove();
@@ -719,8 +830,13 @@ export function ExploreMap() {
     lastRecordedAtRef.current = 0;
     resolvingCityRef.current = false;
     hasCenteredOnUserRef.current = false;
+    viewScopeRef.current = "user";
+    isFollowingUserRef.current = true;
+    setViewScope("user");
+    setIsFollowingUser(true);
+    updateAdminBoundary(null);
     updateMap(sessionRef.current);
-  }, [updateMap]);
+  }, [updateAdminBoundary, updateMap]);
 
   useEffect(() => {
     if (!mapboxToken || !("geolocation" in navigator)) {
@@ -773,10 +889,7 @@ export function ExploreMap() {
   useEffect(() => {
     const visibleArea = showAdminBoundary ? adminAreaRef.current : null;
     updateAdminBoundary(visibleArea);
-    if (visibleArea) {
-      fitAdminAreaOnMap(visibleArea);
-    }
-  }, [adminArea?.id, fitAdminAreaOnMap, showAdminBoundary, updateAdminBoundary]);
+  }, [adminArea?.id, showAdminBoundary, updateAdminBoundary]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -958,17 +1071,6 @@ export function ExploreMap() {
               <HudCard label={t(language, "blocks")} value={String(stats.discoveredGridCount)} />
             </div>
             <div className="flex min-w-0 flex-wrap items-start justify-end gap-2">
-              <button
-                type="button"
-                onClick={toggleAdminBoundary}
-                className={
-                  showAdminBoundary
-                    ? "rounded-md bg-teal-300 px-2.5 py-2 text-xs font-black text-slate-950 shadow-glow"
-                    : "rounded-md border border-white/10 bg-black/40 px-2.5 py-2 text-xs font-bold text-slate-100 shadow-hud backdrop-blur-md transition hover:bg-white/10"
-                }
-              >
-                {language === "zh" ? "区界" : "Area"}
-              </button>
               <LanguageToggle
                 language={language}
                 onChange={(nextLanguage) => {
@@ -981,6 +1083,53 @@ export function ExploreMap() {
           </div>
         </div>
       </section>
+
+      <div className="absolute right-3 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-2 sm:right-5">
+        <CameraToolButton
+          label={language === "zh" ? "回到我" : "Me"}
+          sublabel={
+            language === "zh"
+              ? viewScope === "user" && isFollowingUser
+                ? "定位"
+                : "返回"
+              : viewScope === "user" && isFollowingUser
+                ? "Lock"
+                : "Return"
+          }
+          active={viewScope !== "user" || !isFollowingUser}
+          disabled={!session?.points.length}
+          onClick={() => moveToUserView("fly")}
+        />
+        <CameraToolButton
+          label={language === "zh" ? "区界" : "Area"}
+          sublabel={
+            language === "zh"
+              ? viewScope === "adminArea"
+                ? "回到我"
+                : "全区"
+              : viewScope === "adminArea"
+                ? "Me"
+                : "Full"
+          }
+          active={viewScope === "adminArea"}
+          disabled={!adminArea}
+          onClick={toggleAdminAreaView}
+        />
+        <CameraToolButton
+          label={perspective === "bird" ? "2D" : "3D"}
+          sublabel={
+            language === "zh"
+              ? perspective === "bird"
+                ? "平面"
+                : "鸟瞰"
+              : perspective === "bird"
+                ? "Flat"
+                : "Tilt"
+          }
+          active={perspective === "top"}
+          onClick={() => applyPerspective(perspective === "bird" ? "top" : "bird")}
+        />
+      </div>
 
       {error && !mapboxToken ? (
         <div className="absolute inset-0 z-20 grid place-items-center bg-slate-950/92 px-6 text-center">
@@ -1052,6 +1201,45 @@ export function ExploreMap() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function CameraToolButton({
+  label,
+  sublabel,
+  active = false,
+  disabled = false,
+  onClick
+}: {
+  label: string;
+  sublabel: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      disabled={disabled}
+      onClick={onClick}
+      className={
+        active
+          ? "flex h-[58px] w-[64px] flex-col items-center justify-center rounded-md border border-teal-100/40 bg-teal-300 px-2 text-center font-black text-slate-950 shadow-glow transition disabled:cursor-not-allowed disabled:opacity-45"
+          : "flex h-[58px] w-[64px] flex-col items-center justify-center rounded-md border border-white/10 bg-black/46 px-2 text-center font-black text-slate-100 shadow-hud backdrop-blur-md transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+      }
+    >
+      <span className="max-w-full truncate text-xs leading-none">{label}</span>
+      <span
+        className={
+          active
+            ? "mt-1 max-w-full truncate text-[9px] font-bold uppercase leading-none text-slate-800"
+            : "mt-1 max-w-full truncate text-[9px] font-bold uppercase leading-none text-slate-400"
+        }
+      >
+        {sublabel}
+      </span>
+    </button>
   );
 }
 
@@ -1135,6 +1323,12 @@ function LegendItem({ colorClass, label }: { colorClass: string; label: string }
 
 function getAdminAreaDisplayName(area: AdminArea) {
   return area.localName ?? area.name;
+}
+
+function getCameraOrientation(perspective: MapPerspective) {
+  return perspective === "bird"
+    ? { pitch: BIRD_PITCH, bearing: BIRD_BEARING }
+    : { pitch: TOP_PITCH, bearing: TOP_BEARING };
 }
 
 function getExplorePlaceLabel(

@@ -36,7 +36,8 @@ const copy = {
     delete: "Delete",
     deleting: "Deleting...",
     deleteConfirm: "Delete this history record?",
-    deleteFailed: "Failed to delete history: {error}"
+    deleteFailed: "Failed to delete history: {error}",
+    deleteSuccess: "History deleted"
   },
   zh: {
     title: "探索历史",
@@ -58,7 +59,8 @@ const copy = {
     delete: "删除",
     deleting: "删除中...",
     deleteConfirm: "删除这条历史记录？",
-    deleteFailed: "删除历史失败：{error}"
+    deleteFailed: "删除历史失败：{error}",
+    deleteSuccess: "历史已删除"
   }
 } as const;
 
@@ -70,6 +72,7 @@ export function HistoryView() {
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ tone: "success" | "error"; message: string } | null>(null);
 
   useEffect(() => {
     setLanguage(getInitialLanguage());
@@ -142,7 +145,9 @@ export function HistoryView() {
     setError(null);
     const result = await deleteRemoteExplorationSession(itemId);
     if (!result.ok) {
-      setError(text.deleteFailed.replace("{error}", result.error));
+      const message = text.deleteFailed.replace("{error}", result.error);
+      setError(message);
+      setToast({ tone: "error", message });
       setDeletingId(null);
       return;
     }
@@ -155,11 +160,34 @@ export function HistoryView() {
       return nextItems;
     });
     setDeletingId(null);
+    setToast({ tone: "success", message: text.deleteSuccess });
   }
 
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-6">
-      <div className="mx-auto max-w-6xl">
+    <main className="min-h-screen overflow-x-hidden px-4 py-6 sm:px-6">
+      {toast ? (
+        <div
+          className={
+            toast.tone === "success"
+              ? "fixed right-4 top-4 z-50 rounded-md border border-teal-200/30 bg-teal-300/15 px-4 py-3 text-sm font-bold text-teal-100 shadow-hud backdrop-blur-md"
+              : "fixed right-4 top-4 z-50 rounded-md border border-amber-300/30 bg-amber-300/15 px-4 py-3 text-sm font-bold text-amber-100 shadow-hud backdrop-blur-md"
+          }
+          role="status"
+        >
+          {toast.message}
+        </div>
+      ) : null}
+
+      <div className="mx-auto max-w-6xl overflow-hidden">
         <nav className="flex items-center justify-between gap-3">
           <Link href="/" className="text-sm font-black tracking-[0.18em] text-teal-200">
             ROAMGRID
@@ -215,8 +243,8 @@ export function HistoryView() {
         ) : null}
 
         {user && items.length > 0 ? (
-          <section className="mt-8 grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-            <div className="space-y-3">
+          <section className="mt-8 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+            <div className="min-w-0 space-y-3">
               {items.map((item) => (
                 <button
                   key={item.id}
@@ -229,8 +257,8 @@ export function HistoryView() {
                   }
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-lg font-black text-white">
+                    <div className="min-w-0 flex-1">
+                      <div className="line-clamp-2 break-words text-lg font-black leading-snug text-white">
                         {getHistoryPlaceName(item)}
                       </div>
                       <div className="mt-1 text-sm text-slate-400">
@@ -251,15 +279,17 @@ export function HistoryView() {
             </div>
 
             {selectedItem ? (
-              <div className="rounded-lg border border-white/10 bg-black/30 p-4 shadow-hud backdrop-blur-md">
+              <div className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-black/30 p-4 shadow-hud backdrop-blur-md">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="truncate text-2xl font-black text-white">{getHistoryPlaceName(selectedItem)}</h2>
+                    <h2 className="line-clamp-2 break-words text-2xl font-black leading-tight text-white">
+                      {getHistoryPlaceName(selectedItem)}
+                    </h2>
                     <p className="mt-1 text-sm text-slate-400">
                       {formatDate(selectedItem.startedAt, language)} - {formatDate(selectedItem.endedAt, language)}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-start gap-2">
+                  <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-start">
                     <div className="rounded-md border border-teal-200/30 bg-teal-300/10 px-3 py-2 text-sm font-black text-teal-100">
                       +{selectedItem.discoveredGridCount}
                     </div>

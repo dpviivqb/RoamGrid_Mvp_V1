@@ -15,6 +15,8 @@ create table if not exists public.exploration_sessions (
   place_parent_label_zh text,
   place_full_label_en text,
   place_full_label_zh text,
+  map_snapshot_data_url text,
+  map_snapshot_version integer,
   total_grid_count integer,
   distance_meters double precision not null default 0,
   discovered_grid_count integer not null default 0,
@@ -51,6 +53,8 @@ alter table public.exploration_sessions add column if not exists place_parent_la
 alter table public.exploration_sessions add column if not exists place_parent_label_zh text;
 alter table public.exploration_sessions add column if not exists place_full_label_en text;
 alter table public.exploration_sessions add column if not exists place_full_label_zh text;
+alter table public.exploration_sessions add column if not exists map_snapshot_data_url text;
+alter table public.exploration_sessions add column if not exists map_snapshot_version integer;
 alter table public.exploration_sessions add column if not exists total_grid_count integer;
 
 alter table public.location_points add column if not exists user_id uuid references auth.users(id) on delete set null;

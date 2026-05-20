@@ -1,7 +1,8 @@
 import mapboxgl from "mapbox-gl";
 import type { ExpressionSpecification } from "mapbox-gl";
+import { buildGridCells } from "@/lib/grid";
 import type { Language } from "@/lib/i18n";
-import type { PlaceInfo } from "@/lib/types";
+import type { LocationPoint, PlaceInfo } from "@/lib/types";
 
 const FALLBACK_PLACE: PlaceInfo = {
   label: "Nearby Blocks",
@@ -99,6 +100,30 @@ export function captureMapSnapshot(map: mapboxgl.Map | null) {
   }
 }
 
+export async function captureExplorationMapSnapshot(
+  map: mapboxgl.Map | null,
+  gridIds: string[],
+  points: LocationPoint[]
+) {
+  if (!map) {
+    return null;
+  }
+
+  const bounds = buildExplorationBounds(gridIds, points);
+  if (bounds) {
+    map.fitBounds(bounds, {
+      duration: 0,
+      padding: 72,
+      maxZoom: 16.8,
+      pitch: 0,
+      bearing: 0
+    });
+    await waitForMapFrame(map);
+  }
+
+  return captureMapSnapshot(map);
+}
+
 function buildPlaceInfo(feature: MapboxFeature): PlaceInfo {
   const allParts = [feature, ...(feature.context ?? [])];
   const country = findPart(allParts, "country");
@@ -123,6 +148,46 @@ function buildPlaceInfo(feature: MapboxFeature): PlaceInfo {
     label: en,
     localized: { en, zh }
   };
+}
+
+function buildExplorationBounds(gridIds: string[], points: LocationPoint[]) {
+  const bounds = new mapboxgl.LngLatBounds();
+  let hasBounds = false;
+
+  buildGridCells(gridIds).forEach((cell) => {
+    cell.polygon.forEach(([lng, lat]) => {
+      if (typeof lng === "number" && typeof lat === "number") {
+        bounds.extend([lng, lat]);
+        hasBounds = true;
+      }
+    });
+  });
+
+  if (!hasBounds) {
+    points.forEach((point) => {
+      bounds.extend([point.lng, point.lat]);
+      hasBounds = true;
+    });
+  }
+
+  return hasBounds ? bounds : null;
+}
+
+function waitForMapFrame(map: mapboxgl.Map) {
+  return new Promise<void>((resolve) => {
+    let isResolved = false;
+    const finish = () => {
+      if (isResolved) {
+        return;
+      }
+
+      isResolved = true;
+      window.requestAnimationFrame(() => resolve());
+    };
+
+    map.once("idle", finish);
+    window.setTimeout(finish, 900);
+  });
 }
 
 function findPart(parts: MapboxFeature[], type: string) {

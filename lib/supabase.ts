@@ -29,9 +29,9 @@ export type SupabaseDataResult<T> =
 let browserClient: SupabaseClient | null | undefined;
 const HISTORY_PAGE_SIZE = 100;
 const HISTORY_LIST_SELECT =
-  "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
+  "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,map_snapshot_data_url,map_snapshot_version,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
 const HISTORY_DETAIL_SELECT =
-  "id,anonymous_id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,admin_level,admin_source,admin_area_m2,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
+  "id,anonymous_id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,admin_level,admin_source,admin_area_m2,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,map_snapshot_data_url,map_snapshot_version,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
 const LEGACY_HISTORY_LIST_SELECT =
   "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
 const LEGACY_HISTORY_DETAIL_SELECT =
@@ -199,10 +199,6 @@ export async function syncLocalExplorationHistoryToSupabase(): Promise<SupabaseD
   let syncedCount = 0;
 
   for (const localResult of localHistory) {
-    if (localResult.userId === authUser.id && localResult.supabaseSyncedAt) {
-      continue;
-    }
-
     const shouldKeepSessionId =
       localResult.userId === authUser.id && localResult.syncMode === "authenticated";
     const remoteSessionId = shouldKeepSessionId ? localResult.id : crypto.randomUUID();
@@ -229,6 +225,11 @@ export async function syncLocalExplorationHistoryToSupabase(): Promise<SupabaseD
       resultForSync.supabaseSyncedAt = syncResult.syncedAt;
       syncedCount += 1;
     } else {
+      const updateResult = await updateRemoteSessionMetadata(supabase, authUser.id, resultForSync);
+      if (updateResult) {
+        return { ok: false, error: formatSupabaseError("Failed to update remote history", updateResult) };
+      }
+
       resultForSync.supabaseSyncedAt = new Date().toISOString();
     }
 
@@ -452,7 +453,9 @@ async function saveSession(
     total_grid_count: result.totalGridCount ?? result.adminArea?.totalGridCount,
     distance_meters: result.distanceMeters,
     discovered_grid_count: discoveredGridCount,
-    exploration_percentage: result.explorationPercentage
+    exploration_percentage: result.explorationPercentage,
+    map_snapshot_data_url: result.mapSnapshotDataUrl,
+    map_snapshot_version: result.mapSnapshotVersion
   };
   const { error } = await supabase.from("exploration_sessions").insert({
     ...baseRow,
@@ -464,7 +467,62 @@ async function saveSession(
   });
 
   if (error && isMissingColumnError(error)) {
-    const legacyResult = await supabase.from("exploration_sessions").insert(baseRow);
+    const { map_snapshot_data_url, map_snapshot_version, ...legacyRow } = baseRow;
+    void map_snapshot_data_url;
+    void map_snapshot_version;
+    const legacyResult = await supabase.from("exploration_sessions").insert(legacyRow);
+    return legacyResult.error;
+  }
+
+  return error;
+}
+
+async function updateRemoteSessionMetadata(
+  supabase: SupabaseClient,
+  userId: string,
+  result: ExplorationResult
+) {
+  const hierarchy = buildResultPlaceHierarchy(result);
+  const baseRow = {
+    city_name: result.cityName,
+    admin_area_id: result.adminArea?.id,
+    admin_area_name: result.adminArea?.localName ?? result.adminArea?.name,
+    admin_area_display_name: hierarchy.title.en,
+    admin_level: result.adminArea?.adminLevel,
+    admin_source: result.adminArea?.source,
+    admin_area_m2: result.adminArea?.areaM2,
+    place_parent_label_en: hierarchy.parentPath.en,
+    place_parent_label_zh: hierarchy.parentPath.zh,
+    place_full_label_en: hierarchy.fullPath.en,
+    place_full_label_zh: hierarchy.fullPath.zh,
+    map_snapshot_data_url: result.mapSnapshotDataUrl,
+    map_snapshot_version: result.mapSnapshotVersion,
+    total_grid_count: result.totalGridCount ?? result.adminArea?.totalGridCount,
+    distance_meters: result.distanceMeters,
+    discovered_grid_count: result.discoveredGridIds.length,
+    exploration_percentage: result.explorationPercentage
+  };
+
+  const { error } = await supabase
+    .from("exploration_sessions")
+    .update(baseRow)
+    .eq("user_id", userId)
+    .eq("id", result.id);
+
+  if (error && isMissingColumnError(error)) {
+    const { admin_area_display_name, place_parent_label_en, place_parent_label_zh, place_full_label_en, place_full_label_zh, map_snapshot_data_url, map_snapshot_version, ...legacyRow } = baseRow;
+    void admin_area_display_name;
+    void place_parent_label_en;
+    void place_parent_label_zh;
+    void place_full_label_en;
+    void place_full_label_zh;
+    void map_snapshot_data_url;
+    void map_snapshot_version;
+    const legacyResult = await supabase
+      .from("exploration_sessions")
+      .update(legacyRow)
+      .eq("user_id", userId)
+      .eq("id", result.id);
     return legacyResult.error;
   }
 
@@ -629,7 +687,9 @@ function buildHistorySummaryFromSession(
     durationSeconds: calculateDurationSeconds(session.started_at, session.ended_at),
     blockCount: session.discovered_grid_count,
     explorationPercentage: session.exploration_percentage,
-    totalGridCount: session.total_grid_count ?? undefined
+    totalGridCount: session.total_grid_count ?? undefined,
+    mapSnapshotDataUrl: session.map_snapshot_data_url ?? undefined,
+    mapSnapshotVersion: session.map_snapshot_version ?? undefined
   };
 }
 
@@ -704,6 +764,8 @@ type SessionHistoryRow = {
   place_parent_label_zh?: string | null;
   place_full_label_en?: string | null;
   place_full_label_zh?: string | null;
+  map_snapshot_data_url?: string | null;
+  map_snapshot_version?: number | null;
   total_grid_count: number | null;
   distance_meters: number;
   discovered_grid_count: number;

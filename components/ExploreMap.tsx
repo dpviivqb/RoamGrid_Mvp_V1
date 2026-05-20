@@ -30,7 +30,12 @@ import {
   saveLastResult
 } from "@/lib/storage";
 import { getRemoteAdminDiscoveredGrids, saveResultToSupabase } from "@/lib/supabase";
-import { applyMapLanguage, captureMapSnapshot, formatPlaceLabel, resolvePlaceInfo } from "@/lib/mapbox";
+import {
+  applyMapLanguage,
+  captureExplorationMapSnapshot,
+  formatPlaceLabel,
+  resolvePlaceInfo
+} from "@/lib/mapbox";
 import { buildResultPlaceHierarchy } from "@/lib/history";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
 import type { ExplorationResult, ExplorationSession, LocationPoint } from "@/lib/types";
@@ -760,7 +765,12 @@ export function ExploreMap() {
     }
 
     const endedAt = new Date().toISOString();
-    const mapSnapshotDataUrl = captureMapSnapshot(mapRef.current) ?? undefined;
+    const mapSnapshotDataUrl =
+      (await captureExplorationMapSnapshot(
+        mapRef.current,
+        current.discoveredGridIds,
+        current.points
+      )) ?? undefined;
     const result: ExplorationResult = {
       id: current.id,
       anonymousId: current.anonymousId,
@@ -773,6 +783,7 @@ export function ExploreMap() {
       distanceMeters: current.distanceMeters,
       newlyClaimedGridCount: current.discoveredGridIds.length,
       mapSnapshotDataUrl,
+      mapSnapshotVersion: mapSnapshotDataUrl ? 2 : undefined,
       durationSeconds: Math.max(
         1,
         Math.floor((new Date(endedAt).getTime() - new Date(current.startedAt).getTime()) / 1000)

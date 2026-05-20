@@ -201,7 +201,10 @@ function HistoryCard({ item, language }: { item: HistorySummary; language: Langu
       href={`/history/${item.id}`}
       className="group flex min-w-0 flex-col rounded-lg border border-white/10 bg-black/30 p-3 shadow-hud backdrop-blur-md transition hover:border-teal-200/40 hover:bg-white/5"
     >
-      <HistoryCardPreview snapshot={item.mapSnapshotDataUrl} blockCount={item.blockCount} />
+      <HistoryCardPreview
+        snapshot={item.mapSnapshotVersion === 2 ? item.mapSnapshotDataUrl : undefined}
+        blockCount={item.blockCount}
+      />
       <div className="mt-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="truncate text-xl font-black text-white">

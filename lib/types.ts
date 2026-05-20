@@ -70,6 +70,7 @@ export type ExplorationSession = {
   totalGridCount?: number;
   newlyClaimedGridCount?: number;
   mapSnapshotDataUrl?: string;
+  mapSnapshotVersion?: number;
 };
 
 export type ExplorationResult = Required<
@@ -85,6 +86,7 @@ export type ExplorationResult = Required<
   totalGridCount?: number;
   newlyClaimedGridCount?: number;
   mapSnapshotDataUrl?: string;
+  mapSnapshotVersion?: number;
   placeInfo?: PlaceInfo;
   adminArea?: AdminArea;
   placeHierarchy?: PlaceHierarchy;
@@ -122,6 +124,7 @@ export type HistorySummary = {
   explorationPercentage: number;
   totalGridCount?: number;
   mapSnapshotDataUrl?: string;
+  mapSnapshotVersion?: number;
 };
 
 export type HistoryDetail = HistorySummary & {

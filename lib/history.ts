@@ -90,7 +90,8 @@ export function historySummaryFromResult(
     blockCount: result.newlyClaimedGridCount ?? result.discoveredGridIds.length,
     explorationPercentage: result.explorationPercentage,
     totalGridCount: result.totalGridCount ?? result.adminArea?.totalGridCount,
-    mapSnapshotDataUrl: result.mapSnapshotDataUrl
+    mapSnapshotDataUrl: result.mapSnapshotDataUrl,
+    mapSnapshotVersion: result.mapSnapshotVersion
   };
 }
 
@@ -117,11 +118,13 @@ export function mergeHistorySummaries(summaries: HistorySummary[]) {
       return;
     }
 
+    const snapshotSource = getPreferredSnapshotSource(existing, summary);
     merged.set(summary.id, {
       ...existing,
       ...summary,
       source: mergeSources(existing.source, summary.source),
-      mapSnapshotDataUrl: existing.mapSnapshotDataUrl ?? summary.mapSnapshotDataUrl
+      mapSnapshotDataUrl: snapshotSource?.mapSnapshotDataUrl,
+      mapSnapshotVersion: snapshotSource?.mapSnapshotVersion
     });
   });
 
@@ -255,4 +258,16 @@ function mergeSources(left: HistorySource, right: HistorySource): HistorySource 
   }
 
   return "local_remote";
+}
+
+function getPreferredSnapshotSource(left: HistorySummary, right: HistorySummary) {
+  if (left.mapSnapshotVersion === 2 && left.mapSnapshotDataUrl) {
+    return left;
+  }
+
+  if (right.mapSnapshotVersion === 2 && right.mapSnapshotDataUrl) {
+    return right;
+  }
+
+  return left.mapSnapshotDataUrl ? left : right.mapSnapshotDataUrl ? right : null;
 }

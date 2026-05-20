@@ -15,6 +15,17 @@ export type PlaceInfo = {
   };
 };
 
+export type LocalizedText = {
+  en: string;
+  zh: string;
+};
+
+export type PlaceHierarchy = {
+  title: LocalizedText;
+  parentPath: LocalizedText;
+  fullPath: LocalizedText;
+};
+
 export type AdminArea = {
   id: string;
   countryIso3: string;
@@ -76,6 +87,7 @@ export type ExplorationResult = Required<
   mapSnapshotDataUrl?: string;
   placeInfo?: PlaceInfo;
   adminArea?: AdminArea;
+  placeHierarchy?: PlaceHierarchy;
   supabaseSyncError?: string;
   supabaseSyncedAt?: string;
 };
@@ -90,20 +102,31 @@ export type RemoteAdminGridHistory = {
   gridIds: string[];
 };
 
-export type RemoteExplorationHistoryItem = {
+export type HistorySource = "local" | "remote" | "local_remote";
+
+export type HistorySummary = {
   id: string;
-  userId: string;
   startedAt: string;
   endedAt: string;
+  areaTitle: LocalizedText;
+  parentPath: LocalizedText;
+  fullPlacePath: LocalizedText;
+  source: HistorySource;
+  userId?: string;
   cityName?: string;
   adminAreaId?: string;
   adminAreaName?: string;
-  displayName?: string;
   distanceMeters: number;
   durationSeconds: number;
-  discoveredGridCount: number;
+  blockCount: number;
   explorationPercentage: number;
   totalGridCount?: number;
+  mapSnapshotDataUrl?: string;
+};
+
+export type HistoryDetail = HistorySummary & {
   points: LocationPoint[];
   discoveredGridIds: string[];
+  adminArea?: AdminArea;
+  placeInfo?: PlaceInfo;
 };

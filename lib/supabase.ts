@@ -1,5 +1,6 @@
 import { createClient, type PostgrestError, type SupabaseClient } from "@supabase/supabase-js";
 import { isGlobalGridId } from "@/lib/grid";
+import { buildPlaceHierarchy, buildResultPlaceHierarchy } from "@/lib/history";
 import {
   getAllAdminGridHistory,
   getAnonymousId,
@@ -9,8 +10,9 @@ import {
 import type {
   AuthUser,
   ExplorationResult,
-  LocationPoint,
-  RemoteExplorationHistoryItem
+  HistoryDetail,
+  HistorySummary,
+  LocationPoint
 } from "@/lib/types";
 
 export type SupabaseSaveResult =
@@ -22,6 +24,15 @@ export type SupabaseDataResult<T> =
   | { ok: false; error: string; reason?: "not_configured" | "not_authenticated" };
 
 let browserClient: SupabaseClient | null | undefined;
+const HISTORY_PAGE_SIZE = 100;
+const HISTORY_LIST_SELECT =
+  "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
+const HISTORY_DETAIL_SELECT =
+  "id,anonymous_id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,admin_level,admin_source,admin_area_m2,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
+const LEGACY_HISTORY_LIST_SELECT =
+  "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
+const LEGACY_HISTORY_DETAIL_SELECT =
+  "id,anonymous_id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_level,admin_source,admin_area_m2,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
 
 export function isSupabaseConfigured() {
   return Boolean(getSupabaseConfig().url && getSupabaseConfig().key);
@@ -183,8 +194,8 @@ export async function getRemoteAdminDiscoveredGrids(
   return { ok: true, data: Array.from(new Set(gridIds)) };
 }
 
-export async function getRemoteExplorationHistory(): Promise<
-  SupabaseDataResult<RemoteExplorationHistoryItem[]>
+export async function getRemoteExplorationHistoryList(): Promise<
+  SupabaseDataResult<HistorySummary[]>
 > {
   const supabase = getSupabaseBrowserClient();
   if (!supabase) {
@@ -196,23 +207,61 @@ export async function getRemoteExplorationHistory(): Promise<
     return { ok: false, error: "Sign in to view history.", reason: "not_authenticated" };
   }
 
-  const { data: sessionRows, error: sessionError } = await supabase
-    .from("exploration_sessions")
-    .select(
-      "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage"
-    )
-    .eq("user_id", authUser.id)
-    .order("ended_at", { ascending: false })
-    .limit(30);
-
-  if (sessionError) {
-    return { ok: false, error: formatSupabaseError("Failed to load exploration history", sessionError) };
+  let rowsResult = await fetchHistorySessionRows(supabase, authUser.id, HISTORY_LIST_SELECT);
+  if (!rowsResult.ok && isMissingColumnError(rowsResult.error)) {
+    rowsResult = await fetchHistorySessionRows(supabase, authUser.id, LEGACY_HISTORY_LIST_SELECT);
   }
 
-  const sessions = (sessionRows ?? []) as SessionHistoryRow[];
-  const sessionIds = sessions.map((session) => session.id);
-  if (sessionIds.length === 0) {
-    return { ok: true, data: [] };
+  if (!rowsResult.ok) {
+    return {
+      ok: false,
+      error: formatSupabaseError("Failed to load exploration history", rowsResult.error)
+    };
+  }
+
+  return {
+    ok: true,
+    data: rowsResult.data.map((session) => buildHistorySummaryFromSession(session, "remote"))
+  };
+}
+
+export async function getRemoteExplorationSession(
+  sessionId: string
+): Promise<SupabaseDataResult<HistoryDetail>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase is not configured.", reason: "not_configured" };
+  }
+
+  const authUser = await getCurrentAuthUser();
+  if (!authUser) {
+    return { ok: false, error: "Sign in to view history.", reason: "not_authenticated" };
+  }
+
+  let sessionResult = await fetchHistorySession(
+    supabase,
+    authUser.id,
+    sessionId,
+    HISTORY_DETAIL_SELECT
+  );
+  if (!sessionResult.ok && isMissingColumnError(sessionResult.error)) {
+    sessionResult = await fetchHistorySession(
+      supabase,
+      authUser.id,
+      sessionId,
+      LEGACY_HISTORY_DETAIL_SELECT
+    );
+  }
+
+  if (!sessionResult.ok) {
+    return {
+      ok: false,
+      error: formatSupabaseError("Failed to load exploration session", sessionResult.error)
+    };
+  }
+
+  if (!sessionResult.data) {
+    return { ok: false, error: "History record not found." };
   }
 
   const [{ data: pointRows, error: pointsError }, { data: gridRows, error: gridsError }] =
@@ -221,13 +270,13 @@ export async function getRemoteExplorationHistory(): Promise<
         .from("location_points")
         .select("session_id,lat,lng,timestamp")
         .eq("user_id", authUser.id)
-        .in("session_id", sessionIds)
+        .eq("session_id", sessionId)
         .order("timestamp", { ascending: true }),
       supabase
         .from("discovered_grids")
         .select("session_id,grid_id")
         .eq("user_id", authUser.id)
-        .in("session_id", sessionIds)
+        .eq("session_id", sessionId)
     ]);
 
   if (pointsError) {
@@ -238,43 +287,22 @@ export async function getRemoteExplorationHistory(): Promise<
     return { ok: false, error: formatSupabaseError("Failed to load discovered grids", gridsError) };
   }
 
-  const pointsBySession = new Map<string, LocationPoint[]>();
-  ((pointRows ?? []) as PointHistoryRow[]).forEach((point) => {
-    const points = pointsBySession.get(point.session_id) ?? [];
-    points.push({ lat: point.lat, lng: point.lng, timestamp: point.timestamp });
-    pointsBySession.set(point.session_id, points);
-  });
-
-  const gridsBySession = new Map<string, string[]>();
-  ((gridRows ?? []) as GridHistoryRow[]).forEach((grid) => {
-    if (!grid.session_id || !isGlobalGridId(grid.grid_id)) {
-      return;
-    }
-
-    const gridIds = gridsBySession.get(grid.session_id) ?? [];
-    gridIds.push(grid.grid_id);
-    gridsBySession.set(grid.session_id, gridIds);
-  });
+  const points = ((pointRows ?? []) as PointHistoryRow[]).map((point) => ({
+    lat: point.lat,
+    lng: point.lng,
+    timestamp: point.timestamp
+  }));
+  const gridIds = ((gridRows ?? []) as GridHistoryRow[])
+    .map((grid) => grid.grid_id)
+    .filter(isGlobalGridId);
 
   return {
     ok: true,
-    data: sessions.map((session) => ({
-      id: session.id,
-      userId: session.user_id,
-      startedAt: session.started_at,
-      endedAt: session.ended_at,
-      cityName: session.city_name ?? undefined,
-      adminAreaId: session.admin_area_id ?? undefined,
-      adminAreaName: session.admin_area_name ?? undefined,
-      displayName: buildDisplayName(session.city_name, session.admin_area_name),
-      distanceMeters: session.distance_meters,
-      durationSeconds: calculateDurationSeconds(session.started_at, session.ended_at),
-      discoveredGridCount: session.discovered_grid_count,
-      explorationPercentage: session.exploration_percentage,
-      totalGridCount: session.total_grid_count ?? undefined,
-      points: pointsBySession.get(session.id) ?? [],
-      discoveredGridIds: Array.from(new Set(gridsBySession.get(session.id) ?? []))
-    }))
+    data: {
+      ...buildHistorySummaryFromSession(sessionResult.data, "remote"),
+      points,
+      discoveredGridIds: Array.from(new Set(gridIds))
+    }
   };
 }
 
@@ -330,7 +358,8 @@ async function saveSession(
   discoveredGridCount: number,
   userId: string | undefined
 ) {
-  const { error } = await supabase.from("exploration_sessions").insert({
+  const hierarchy = buildResultPlaceHierarchy(result);
+  const baseRow = {
     id: result.id,
     anonymous_id: result.anonymousId,
     user_id: userId ?? null,
@@ -346,7 +375,20 @@ async function saveSession(
     distance_meters: result.distanceMeters,
     discovered_grid_count: discoveredGridCount,
     exploration_percentage: result.explorationPercentage
+  };
+  const { error } = await supabase.from("exploration_sessions").insert({
+    ...baseRow,
+    admin_area_display_name: hierarchy.title.en,
+    place_parent_label_en: hierarchy.parentPath.en,
+    place_parent_label_zh: hierarchy.parentPath.zh,
+    place_full_label_en: hierarchy.fullPath.en,
+    place_full_label_zh: hierarchy.fullPath.zh
   });
+
+  if (error && isMissingColumnError(error)) {
+    const legacyResult = await supabase.from("exploration_sessions").insert(baseRow);
+    return legacyResult.error;
+  }
 
   return error;
 }
@@ -410,6 +452,90 @@ async function saveGrids(
   return error;
 }
 
+async function fetchHistorySessionRows(
+  supabase: SupabaseClient,
+  userId: string,
+  selectColumns: string
+): Promise<{ ok: true; data: SessionHistoryRow[] } | { ok: false; error: PostgrestError }> {
+  const rows: SessionHistoryRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("exploration_sessions")
+      .select(selectColumns)
+      .eq("user_id", userId)
+      .order("ended_at", { ascending: false })
+      .range(from, from + HISTORY_PAGE_SIZE - 1);
+
+    if (error) {
+      return { ok: false, error };
+    }
+
+    const pageRows = (data ?? []) as unknown as SessionHistoryRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < HISTORY_PAGE_SIZE) {
+      return { ok: true, data: rows };
+    }
+
+    from += HISTORY_PAGE_SIZE;
+  }
+}
+
+async function fetchHistorySession(
+  supabase: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  selectColumns: string
+): Promise<{ ok: true; data: SessionHistoryRow | null } | { ok: false; error: PostgrestError }> {
+  const { data, error } = await supabase
+    .from("exploration_sessions")
+    .select(selectColumns)
+    .eq("user_id", userId)
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error };
+  }
+
+  return { ok: true, data: data as unknown as SessionHistoryRow | null };
+}
+
+function buildHistorySummaryFromSession(
+  session: SessionHistoryRow,
+  source: "remote"
+): HistorySummary {
+  const hierarchy = buildPlaceHierarchy({
+    cityName: session.city_name,
+    adminAreaName: session.admin_area_name,
+    adminAreaDisplayName: session.admin_area_display_name,
+    parentLabelEn: session.place_parent_label_en,
+    parentLabelZh: session.place_parent_label_zh,
+    fullLabelEn: session.place_full_label_en,
+    fullLabelZh: session.place_full_label_zh
+  });
+
+  return {
+    id: session.id,
+    startedAt: session.started_at,
+    endedAt: session.ended_at,
+    areaTitle: hierarchy.title,
+    parentPath: hierarchy.parentPath,
+    fullPlacePath: hierarchy.fullPath,
+    source,
+    userId: session.user_id,
+    cityName: session.city_name ?? undefined,
+    adminAreaId: session.admin_area_id ?? undefined,
+    adminAreaName: session.admin_area_name ?? undefined,
+    distanceMeters: session.distance_meters,
+    durationSeconds: calculateDurationSeconds(session.started_at, session.ended_at),
+    blockCount: session.discovered_grid_count,
+    explorationPercentage: session.exploration_percentage,
+    totalGridCount: session.total_grid_count ?? undefined
+  };
+}
+
 function getSupabaseConfig() {
   const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key =
@@ -437,6 +563,14 @@ function isDuplicateRowError(error: PostgrestError) {
   return error.code === "23505";
 }
 
+function isMissingColumnError(error: PostgrestError) {
+  return (
+    error.code === "42703" ||
+    (error.message.toLowerCase().includes("column") &&
+      error.message.toLowerCase().includes("does not exist"))
+  );
+}
+
 function getSyncableGridIds(gridIds: string[]) {
   return gridIds.filter(isGlobalGridId);
 }
@@ -456,25 +590,23 @@ function calculateDurationSeconds(startedAt: string, endedAt: string) {
   return Math.max(1, Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
 }
 
-function buildDisplayName(cityName: string | null, adminAreaName: string | null) {
-  const city = cityName?.trim();
-  const adminArea = adminAreaName?.trim();
-
-  if (city && adminArea && !city.toLowerCase().includes(adminArea.toLowerCase())) {
-    return `${city} · ${adminArea}`;
-  }
-
-  return city || adminArea || undefined;
-}
-
 type SessionHistoryRow = {
   id: string;
+  anonymous_id?: string | null;
   user_id: string;
   started_at: string;
   ended_at: string;
   city_name: string | null;
   admin_area_id: string | null;
   admin_area_name: string | null;
+  admin_area_display_name?: string | null;
+  admin_level?: string | null;
+  admin_source?: string | null;
+  admin_area_m2?: number | null;
+  place_parent_label_en?: string | null;
+  place_parent_label_zh?: string | null;
+  place_full_label_en?: string | null;
+  place_full_label_zh?: string | null;
   total_grid_count: number | null;
   distance_meters: number;
   discovered_grid_count: number;

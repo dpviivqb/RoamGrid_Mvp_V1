@@ -7,9 +7,14 @@ create table if not exists public.exploration_sessions (
   city_name text,
   admin_area_id text,
   admin_area_name text,
+  admin_area_display_name text,
   admin_level text,
   admin_source text,
   admin_area_m2 double precision,
+  place_parent_label_en text,
+  place_parent_label_zh text,
+  place_full_label_en text,
+  place_full_label_zh text,
   total_grid_count integer,
   distance_meters double precision not null default 0,
   discovered_grid_count integer not null default 0,
@@ -38,9 +43,14 @@ create table if not exists public.discovered_grids (
 alter table public.exploration_sessions add column if not exists user_id uuid references auth.users(id) on delete set null;
 alter table public.exploration_sessions add column if not exists admin_area_id text;
 alter table public.exploration_sessions add column if not exists admin_area_name text;
+alter table public.exploration_sessions add column if not exists admin_area_display_name text;
 alter table public.exploration_sessions add column if not exists admin_level text;
 alter table public.exploration_sessions add column if not exists admin_source text;
 alter table public.exploration_sessions add column if not exists admin_area_m2 double precision;
+alter table public.exploration_sessions add column if not exists place_parent_label_en text;
+alter table public.exploration_sessions add column if not exists place_parent_label_zh text;
+alter table public.exploration_sessions add column if not exists place_full_label_en text;
+alter table public.exploration_sessions add column if not exists place_full_label_zh text;
 alter table public.exploration_sessions add column if not exists total_grid_count integer;
 
 alter table public.location_points add column if not exists user_id uuid references auth.users(id) on delete set null;

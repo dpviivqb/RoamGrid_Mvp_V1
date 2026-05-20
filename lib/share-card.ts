@@ -1,4 +1,5 @@
 import { formatDistance, formatDuration, formatPercentage } from "@/lib/format";
+import { calculateResultXp } from "@/lib/history";
 import { t, type Language } from "@/lib/i18n";
 import type { ExplorationResult } from "@/lib/types";
 
@@ -22,7 +23,7 @@ export async function buildShareCardImage(
   const claimedBlocks = result.newlyClaimedGridCount ?? result.discoveredGridIds.length;
   drawBackground(ctx);
   drawHeader(ctx, place);
-  drawClaim(ctx, claimedBlocks, language);
+  drawClaim(ctx, claimedBlocks, result.distanceMeters, language);
   await drawMap(ctx, result.mapSnapshotDataUrl);
   drawStats(ctx, result, language);
 
@@ -71,15 +72,24 @@ function drawHeader(ctx: CanvasRenderingContext2D, place: string) {
   ctx.textBaseline = "alphabetic";
 }
 
-function drawClaim(ctx: CanvasRenderingContext2D, claimedBlocks: number, language: Language) {
+function drawClaim(
+  ctx: CanvasRenderingContext2D,
+  claimedBlocks: number,
+  distanceMeters: number,
+  language: Language
+) {
+  const hasNewBlocks = claimedBlocks > 0;
+  const rewardValue = hasNewBlocks ? `+${claimedBlocks}` : `+${calculateResultXp(distanceMeters)}`;
+  const rewardTitle = hasNewBlocks ? t(language, "newBlockClaimed") : t(language, "pathExtended");
+
   ctx.fillStyle = "#99f6e4";
   ctx.font = "900 190px Arial";
   ctx.textAlign = "center";
-  ctx.fillText(`+${claimedBlocks}`, WIDTH / 2, 335);
+  ctx.fillText(rewardValue, WIDTH / 2, 335);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "900 48px Arial";
-  ctx.fillText(t(language, "newBlockClaimed").toUpperCase(), WIDTH / 2, 405);
+  ctx.fillText(rewardTitle.toUpperCase(), WIDTH / 2, 405);
   ctx.textAlign = "left";
 }
 

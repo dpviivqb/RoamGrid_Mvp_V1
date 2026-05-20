@@ -26,10 +26,12 @@ import {
   getAdminDiscoveredGrids,
   mergeAdminDiscoveredGrids,
   saveCurrentSession,
+  saveExplorationHistory,
   saveLastResult
 } from "@/lib/storage";
 import { getRemoteAdminDiscoveredGrids, saveResultToSupabase } from "@/lib/supabase";
 import { applyMapLanguage, captureMapSnapshot, formatPlaceLabel, resolvePlaceInfo } from "@/lib/mapbox";
+import { buildResultPlaceHierarchy } from "@/lib/history";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
 import type { ExplorationResult, ExplorationSession, LocationPoint } from "@/lib/types";
 
@@ -779,7 +781,26 @@ export function ExploreMap() {
       totalGridCount: current.totalGridCount,
       adminArea: current.adminArea,
       userId: current.userId,
-      syncMode: current.syncMode
+      syncMode: current.syncMode,
+      placeHierarchy: buildResultPlaceHierarchy({
+        id: current.id,
+        anonymousId: current.anonymousId,
+        startedAt: current.startedAt,
+        endedAt,
+        cityName: current.cityName,
+        placeInfo: current.placeInfo,
+        points: current.points,
+        discoveredGridIds: current.discoveredGridIds,
+        distanceMeters: current.distanceMeters,
+        newlyClaimedGridCount: current.discoveredGridIds.length,
+        durationSeconds: Math.max(
+          1,
+          Math.floor((new Date(endedAt).getTime() - new Date(current.startedAt).getTime()) / 1000)
+        ),
+        explorationPercentage: current.explorationPercentage,
+        totalGridCount: current.totalGridCount,
+        adminArea: current.adminArea
+      })
     };
 
     if (current.adminArea) {
@@ -790,18 +811,19 @@ export function ExploreMap() {
       );
     }
     saveLastResult(result);
+    saveExplorationHistory(result);
     clearCurrentSession();
     const syncResult = await saveResultToSupabase(result);
-    saveLastResult(
-      syncResult.ok
-        ? {
-            ...result,
-            userId: syncResult.userId,
-            syncMode: syncResult.syncMode,
-            supabaseSyncedAt: syncResult.syncedAt
-          }
-        : { ...result, supabaseSyncError: syncResult.error }
-    );
+    const syncedResult = syncResult.ok
+      ? {
+          ...result,
+          userId: syncResult.userId,
+          syncMode: syncResult.syncMode,
+          supabaseSyncedAt: syncResult.syncedAt
+        }
+      : { ...result, supabaseSyncError: syncResult.error };
+    saveLastResult(syncedResult);
+    saveExplorationHistory(syncedResult);
     router.push("/result");
   }
 

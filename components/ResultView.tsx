@@ -6,11 +6,11 @@ import { useRouter } from "next/navigation";
 import { AccountMenu } from "@/components/AccountMenu";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { formatDistance, formatDuration, formatPercentage } from "@/lib/format";
+import { buildResultPlaceHierarchy, calculateResultXp } from "@/lib/history";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
-import { formatPlaceLabel } from "@/lib/mapbox";
 import { buildShareCardImage } from "@/lib/share-card";
 import { saveResultToSupabase } from "@/lib/supabase";
-import { getLastResult, saveLastResult } from "@/lib/storage";
+import { getLastResult, saveExplorationHistory, saveLastResult } from "@/lib/storage";
 import type { ExplorationResult } from "@/lib/types";
 
 export function ResultView() {
@@ -25,7 +25,11 @@ export function ResultView() {
 
   useEffect(() => {
     setLanguage(getInitialLanguage());
-    setResult(getLastResult());
+    const lastResult = getLastResult();
+    if (lastResult) {
+      saveExplorationHistory(lastResult);
+    }
+    setResult(lastResult);
   }, []);
 
   useEffect(() => {
@@ -49,6 +53,7 @@ export function ResultView() {
           : { ...result, supabaseSyncError: syncResult.error };
 
         saveLastResult(nextResult);
+        saveExplorationHistory(nextResult);
         setResult(nextResult);
       })
       .finally(() => {
@@ -105,8 +110,8 @@ export function ResultView() {
     );
   }
 
-  const claimedBlocks = result.newlyClaimedGridCount ?? result.discoveredGridIds.length;
   const place = getResultPlace(result, language);
+  const reward = getResultReward(result, language, place);
 
   return (
     <main className="min-h-screen overflow-hidden px-4 py-6 sm:px-6">
@@ -126,16 +131,16 @@ export function ResultView() {
             {t(language, "missionComplete")}
           </p>
           <h1 className="mt-3 text-4xl font-black leading-tight text-white sm:text-6xl">
-            {t(language, "territoryClaimed")}
+            {reward.headline}
           </h1>
           <div className="mt-6 text-8xl font-black leading-none text-teal-200 drop-shadow-[0_0_28px_rgba(45,212,191,0.55)] sm:text-9xl">
-            +{claimedBlocks}
+            {reward.value}
           </div>
           <div className="mt-1 text-2xl font-black uppercase tracking-[0.14em] text-white">
-            {language === "zh" ? "区块" : "Blocks"}
+            {reward.unit}
           </div>
           <p className="mt-5 max-w-xl text-lg leading-7 text-slate-300">
-            {t(language, "claimedIn", { count: claimedBlocks, place })}
+            {reward.body}
           </p>
 
           <ProgressBar
@@ -204,12 +209,30 @@ function ResultStat({ label, value }: { label: string; value: string }) {
 }
 
 function getResultPlace(result: ExplorationResult, language: Language) {
-  return (
-    result.adminArea?.localName ??
-    result.adminArea?.name ??
-    formatPlaceLabel(result.placeInfo, language) ??
-    result.cityName
-  );
+  const hierarchy = buildResultPlaceHierarchy(result);
+  return hierarchy.fullPath[language] || hierarchy.fullPath.en || result.cityName;
+}
+
+function getResultReward(result: ExplorationResult, language: Language, place: string) {
+  const claimedBlocks = result.newlyClaimedGridCount ?? result.discoveredGridIds.length;
+  if (claimedBlocks > 0) {
+    return {
+      headline: t(language, "territoryClaimed"),
+      value: `+${claimedBlocks}`,
+      unit: language === "zh" ? "区块" : "Blocks",
+      body: t(language, "claimedIn", { count: claimedBlocks, place }),
+      cardTitle: t(language, "newBlockClaimed")
+    };
+  }
+
+  const xp = calculateResultXp(result.distanceMeters);
+  return {
+    headline: t(language, "pathExtended"),
+    value: `+${xp}`,
+    unit: "XP",
+    body: t(language, "pathExtendedBody", { xp, place }),
+    cardTitle: t(language, "pathExtended")
+  };
 }
 
 function ProgressBar({ label, value }: { label: string; value: number }) {
@@ -240,7 +263,7 @@ function ShareCard({
   language: Language;
   place: string;
 }) {
-  const gridCount = result.newlyClaimedGridCount ?? result.discoveredGridIds.length;
+  const reward = getResultReward(result, language, place);
 
   return (
     <div
@@ -257,10 +280,10 @@ function ShareCard({
 
         <div className="mt-6 text-center">
           <div className="text-7xl font-black leading-none text-teal-200 drop-shadow-[0_0_28px_rgba(45,212,191,0.55)]">
-            +{gridCount}
+            {reward.value}
           </div>
           <h2 className="mt-2 text-2xl font-black uppercase tracking-[0.08em] text-white">
-            {t(language, "newBlockClaimed")}
+            {reward.cardTitle}
           </h2>
         </div>
 

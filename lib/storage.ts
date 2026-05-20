@@ -5,6 +5,7 @@ export const STORAGE_KEYS = {
   anonymousId: "roamgrid_anonymous_id",
   currentSession: "roamgrid_current_session",
   lastResult: "roamgrid_last_result",
+  explorationHistory: "roamgrid_history_v1",
   discoveredGrids: "roamgrid_discovered_grids",
   adminGridHistory: "roamgrid_admin_grid_history_v1",
   authHistoryMergedUsers: "roamgrid_auth_history_merged_users_v1",
@@ -58,6 +59,46 @@ export function getLastResult() {
 
   const value = window.localStorage.getItem(STORAGE_KEYS.lastResult);
   return value ? (JSON.parse(value) as ExplorationResult) : null;
+}
+
+export function saveExplorationHistory(result: ExplorationResult) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const history = getLocalExplorationHistory();
+  const nextHistory = [
+    sanitizeExplorationResult(result),
+    ...history.filter((item) => item.id !== result.id)
+  ].sort((left, right) => new Date(right.endedAt).getTime() - new Date(left.endedAt).getTime());
+
+  window.localStorage.setItem(STORAGE_KEYS.explorationHistory, JSON.stringify(nextHistory));
+}
+
+export function getLocalExplorationHistory() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  return parseExplorationResults(window.localStorage.getItem(STORAGE_KEYS.explorationHistory));
+}
+
+export function getLocalExplorationResult(resultId: string) {
+  return getLocalExplorationHistory().find((result) => result.id === resultId) ?? null;
+}
+
+export function deleteLocalExplorationResult(resultId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const nextHistory = getLocalExplorationHistory().filter((result) => result.id !== resultId);
+  if (nextHistory.length === 0) {
+    window.localStorage.removeItem(STORAGE_KEYS.explorationHistory);
+    return;
+  }
+
+  window.localStorage.setItem(STORAGE_KEYS.explorationHistory, JSON.stringify(nextHistory));
 }
 
 export function mergeDiscoveredGrids(gridIds: string[]) {
@@ -152,6 +193,61 @@ function parseGridIds(value: string | null) {
   } catch {
     return [];
   }
+}
+
+function parseExplorationResults(value: string | null) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter(isExplorationResult)
+      .map(sanitizeExplorationResult);
+  } catch {
+    return [];
+  }
+}
+
+function isExplorationResult(value: unknown): value is ExplorationResult {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const result = value as ExplorationResult;
+  return (
+    typeof result.id === "string" &&
+    typeof result.anonymousId === "string" &&
+    typeof result.startedAt === "string" &&
+    typeof result.endedAt === "string" &&
+    typeof result.cityName === "string" &&
+    typeof result.distanceMeters === "number" &&
+    typeof result.durationSeconds === "number" &&
+    typeof result.explorationPercentage === "number" &&
+    Array.isArray(result.points) &&
+    Array.isArray(result.discoveredGridIds)
+  );
+}
+
+function sanitizeExplorationResult(result: ExplorationResult): ExplorationResult {
+  const discoveredGridIds = result.discoveredGridIds.filter(isGlobalGridId);
+
+  return {
+    ...result,
+    points: result.points.filter(
+      (point) =>
+        typeof point.lat === "number" &&
+        typeof point.lng === "number" &&
+        typeof point.timestamp === "string"
+    ),
+    discoveredGridIds,
+    newlyClaimedGridCount: result.newlyClaimedGridCount ?? discoveredGridIds.length
+  };
 }
 
 function getAdminGridHistory() {

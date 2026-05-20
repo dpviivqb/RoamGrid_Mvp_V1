@@ -56,6 +56,36 @@ export function getAdminAreaFeatureCollection(feature: ResolvedAdminArea): GeoJS
   };
 }
 
+export function getAdminAreaMaskFeatureCollection(feature: ResolvedAdminArea): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {
+          id: `${feature.area.id}-outside-mask`
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            orientRing(
+              [
+                [-180, -85],
+                [180, -85],
+                [180, 85],
+                [-180, 85],
+                [-180, -85]
+              ],
+              "ccw"
+            ),
+            ...getOuterRings(feature.geometry).map((ring) => orientRing(ring, "cw"))
+          ]
+        }
+      }
+    ]
+  };
+}
+
 async function loadAdminAreaIndex() {
   if (!indexCache) {
     indexCache = fetch(DEFAULT_INDEX_PATH).then(async (response) => {
@@ -67,6 +97,42 @@ async function loadAdminAreaIndex() {
   }
 
   return indexCache;
+}
+
+function getOuterRings(geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon) {
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  return polygons
+    .map((polygon) => polygon[0])
+    .filter((ring): ring is GeoJSON.Position[] => Array.isArray(ring) && ring.length > 0)
+    .map(closeRing);
+}
+
+function closeRing(ring: GeoJSON.Position[]) {
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (first && last && first[0] === last[0] && first[1] === last[1]) {
+    return ring;
+  }
+
+  return [...ring, first];
+}
+
+function orientRing(ring: GeoJSON.Position[], direction: "cw" | "ccw") {
+  const closedRing = closeRing(ring);
+  const isClockwise = getRingSignedArea(closedRing) < 0;
+
+  if ((direction === "cw" && isClockwise) || (direction === "ccw" && !isClockwise)) {
+    return closedRing;
+  }
+
+  return [...closedRing].reverse();
+}
+
+function getRingSignedArea(ring: GeoJSON.Position[]) {
+  return ring.reduce((area, point, index) => {
+    const next = ring[(index + 1) % ring.length];
+    return area + (point[0] * next[1] - next[0] * point[1]);
+  }, 0);
 }
 
 async function loadAdminAreaFeature(entry: AdminAreaIndexEntry) {

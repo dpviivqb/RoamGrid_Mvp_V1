@@ -7,6 +7,7 @@ import { AccountMenu } from "@/components/AccountMenu";
 import { createPulsingMarkerElement } from "@/components/PulsingMarker";
 import {
   getAdminAreaFeatureCollection,
+  getAdminAreaMaskFeatureCollection,
   isPointInAdminArea,
   resolveAdminArea,
   type ResolvedAdminArea
@@ -38,9 +39,14 @@ import {
 } from "@/lib/mapbox";
 import { buildResultPlaceHierarchy } from "@/lib/history";
 import { getInitialLanguage, saveLanguage, t, type Language } from "@/lib/i18n";
-import type { ExplorationResult, ExplorationSession, LocationPoint } from "@/lib/types";
+import type { AdminArea, ExplorationResult, ExplorationSession, LocationPoint } from "@/lib/types";
 
 const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+
+type AreaTransition = {
+  from: string;
+  to: string;
+};
 
 export function ExploreMap() {
   const router = useRouter();
@@ -55,6 +61,7 @@ export function ExploreMap() {
   const resolvingAdminAreaRef = useRef(false);
   const resolvingCityRef = useRef(false);
   const unlockTimeoutRef = useRef<number | null>(null);
+  const areaTransitionTimeoutRef = useRef<number | null>(null);
   const locationRetryTimeoutRef = useRef<number | null>(null);
   const requestCurrentPositionRef = useRef<(() => void) | null>(null);
   const hasReceivedPositionRef = useRef(false);
@@ -73,6 +80,7 @@ export function ExploreMap() {
   const [isFinishPromptOpen, setIsFinishPromptOpen] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
   const [newGridId, setNewGridId] = useState<string | null>(null);
+  const [areaTransition, setAreaTransition] = useState<AreaTransition | null>(null);
 
   const stats = useMemo(() => {
     const discoveredGridCount = session?.discoveredGridIds.length ?? 0;
@@ -96,6 +104,13 @@ export function ExploreMap() {
     source?.setData(
       area
         ? getAdminAreaFeatureCollection(area)
+        : { type: "FeatureCollection", features: [] }
+    );
+
+    const maskSource = map.getSource("admin-area-mask") as mapboxgl.GeoJSONSource | undefined;
+    maskSource?.setData(
+      area
+        ? getAdminAreaMaskFeatureCollection(area)
         : { type: "FeatureCollection", features: [] }
     );
   }, []);
@@ -207,14 +222,25 @@ export function ExploreMap() {
         const activeSession = sessionRef.current;
         if (
           activeSession?.adminArea &&
-          activeSession.adminArea.id !== resolvedArea.area.id &&
-          activeSession.discoveredGridIds.length > 0
+          activeSession.adminArea.id !== resolvedArea.area.id
         ) {
-          mergeAdminDiscoveredGrids(
-            activeSession.adminArea.id,
-            activeSession.adminArea.localName ?? activeSession.adminArea.name,
-            activeSession.discoveredGridIds
-          );
+          setAreaTransition({
+            from: getAdminAreaDisplayName(activeSession.adminArea),
+            to: getAdminAreaDisplayName(resolvedArea.area)
+          });
+          if (areaTransitionTimeoutRef.current) {
+            window.clearTimeout(areaTransitionTimeoutRef.current);
+          }
+          areaTransitionTimeoutRef.current = window.setTimeout(() => {
+            setAreaTransition(null);
+          }, 6200);
+          if (activeSession.discoveredGridIds.length > 0) {
+            mergeAdminDiscoveredGrids(
+              activeSession.adminArea.id,
+              activeSession.adminArea.localName ?? activeSession.adminArea.name,
+              activeSession.discoveredGridIds
+            );
+          }
         }
 
         await applyAdminArea(resolvedArea);
@@ -529,24 +555,30 @@ export function ExploreMap() {
         data: { type: "FeatureCollection", features: [] }
       });
 
+      map.addSource("admin-area-mask", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] }
+      });
+
       map.addLayer({
         id: "admin-area-fill",
         type: "fill",
         source: "admin-area",
         paint: {
-          "fill-color": "#14b8a6",
-          "fill-opacity": 0.08
+          "fill-color": "#2dd4bf",
+          "fill-opacity": 0.13
         }
       });
 
       map.addLayer({
-        id: "admin-area-outline",
+        id: "admin-area-outline-glow",
         type: "line",
         source: "admin-area",
         paint: {
           "line-color": "#5eead4",
-          "line-width": 2,
-          "line-opacity": 0.8
+          "line-width": 9,
+          "line-blur": 7,
+          "line-opacity": 0.48
         }
       });
 
@@ -635,6 +667,27 @@ export function ExploreMap() {
         }
       });
 
+      map.addLayer({
+        id: "admin-area-outside-mask",
+        type: "fill",
+        source: "admin-area-mask",
+        paint: {
+          "fill-color": "#020617",
+          "fill-opacity": 0.58
+        }
+      });
+
+      map.addLayer({
+        id: "admin-area-outline",
+        type: "line",
+        source: "admin-area",
+        paint: {
+          "line-color": "#ccfbf1",
+          "line-width": 3.2,
+          "line-opacity": 0.96
+        }
+      });
+
       updateAdminBoundary(showAdminBoundary ? adminAreaRef.current : null);
       updateMap(sessionRef.current);
     });
@@ -642,6 +695,9 @@ export function ExploreMap() {
     return () => {
       if (unlockTimeoutRef.current) {
         window.clearTimeout(unlockTimeoutRef.current);
+      }
+      if (areaTransitionTimeoutRef.current) {
+        window.clearTimeout(areaTransitionTimeoutRef.current);
       }
       if (locationRetryTimeoutRef.current) {
         window.clearTimeout(locationRetryTimeoutRef.current);
@@ -715,8 +771,12 @@ export function ExploreMap() {
   }, [language]);
 
   useEffect(() => {
-    updateAdminBoundary(showAdminBoundary ? adminAreaRef.current : null);
-  }, [showAdminBoundary, updateAdminBoundary]);
+    const visibleArea = showAdminBoundary ? adminAreaRef.current : null;
+    updateAdminBoundary(visibleArea);
+    if (visibleArea) {
+      fitAdminAreaOnMap(visibleArea);
+    }
+  }, [adminArea?.id, fitAdminAreaOnMap, showAdminBoundary, updateAdminBoundary]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -882,6 +942,12 @@ export function ExploreMap() {
                 ) : null}
               </div>
             </div>
+            {showAdminBoundary && adminArea ? (
+              <AreaModePanel areaName={getAdminAreaDisplayName(adminArea)} language={language} />
+            ) : null}
+            {areaTransition ? (
+              <AreaTransitionPanel transition={areaTransition} language={language} />
+            ) : null}
           </div>
 
           <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-start lg:justify-end">
@@ -998,6 +1064,77 @@ function HudCard({ label, value }: { label: string; value: string }) {
       <div className="mt-1 truncate text-sm font-black text-white sm:text-lg">{value}</div>
     </div>
   );
+}
+
+function AreaModePanel({ areaName, language }: { areaName: string; language: Language }) {
+  return (
+    <div className="min-w-0 rounded-md border border-teal-100/25 bg-black/48 px-3 py-3 text-xs text-slate-200 shadow-hud backdrop-blur-md lg:max-w-md">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] font-black uppercase tracking-[0.18em] text-teal-200">
+            {language === "zh" ? "行政区视图" : "Area View"}
+          </div>
+          <div className="mt-1 truncate text-sm font-black text-white">{areaName}</div>
+        </div>
+        <div className="shrink-0 rounded-md border border-teal-100/30 bg-teal-300/14 px-2 py-1 font-black text-teal-100">
+          {language === "zh" ? "全区" : "Full"}
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <LegendItem
+          colorClass="bg-slate-950/80"
+          label={language === "zh" ? "区外" : "Outside"}
+        />
+        <LegendItem
+          colorClass="border border-teal-100 bg-teal-300/30 shadow-[0_0_12px_rgba(45,212,191,0.55)]"
+          label={language === "zh" ? "行政区" : "Area"}
+        />
+        <LegendItem
+          colorClass="border-2 border-white bg-sky-300 shadow-[0_0_14px_rgba(56,189,248,0.95)]"
+          label={language === "zh" ? "你" : "You"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AreaTransitionPanel({
+  transition,
+  language
+}: {
+  transition: AreaTransition;
+  language: Language;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-sky-200/25 bg-sky-300/12 px-3 py-3 text-xs text-sky-50 shadow-hud backdrop-blur-md lg:max-w-md">
+      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-sky-100">
+        {language === "zh" ? "跨区探索" : "Cross-area run"}
+      </div>
+      <div className="mt-1 truncate text-sm font-black text-white">
+        {transition.from} → {transition.to}
+      </div>
+      <div className="mt-1 text-sky-100/80">
+        {language === "zh"
+          ? "上一区域进度已保留，当前行政区重新计数。"
+          : "Previous area progress is kept; the current area starts a fresh count."}
+      </div>
+    </div>
+  );
+}
+
+function LegendItem({ colorClass, label }: { colorClass: string; label: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-2">
+      <span className={`h-3 w-3 shrink-0 rounded-full ${colorClass}`} />
+      <span className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-slate-300">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function getAdminAreaDisplayName(area: AdminArea) {
+  return area.localName ?? area.name;
 }
 
 function getExplorePlaceLabel(

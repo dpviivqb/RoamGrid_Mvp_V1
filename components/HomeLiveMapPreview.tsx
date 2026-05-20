@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import { createPulsingMarkerElement } from "@/components/PulsingMarker";
-import { applyMapLanguage } from "@/lib/mapbox";
+import { applyMapLanguage, formatPlaceLabel, resolvePlaceInfo } from "@/lib/mapbox";
 import type { Language } from "@/lib/i18n";
+import type { PlaceInfo } from "@/lib/types";
 
 const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 const FALLBACK_CENTER: [number, number] = [120.1551, 30.2741];
+const PLACE_REFRESH_DISTANCE_METERS = 1000;
 
 export function HomeLiveMapPreview({
   language,
@@ -23,12 +25,36 @@ export function HomeLiveMapPreview({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markerRef = useRef<mapboxgl.Marker | null>(null);
-  const [message, setMessage] = useState(status);
+  const watchIdRef = useRef<number | null>(null);
+  const lastPlacePointRef = useRef<[number, number] | null>(null);
+  const placeRequestIdRef = useRef(0);
+  const [placeInfo, setPlaceInfo] = useState<PlaceInfo | null>(null);
+  const [previewState, setPreviewState] = useState<"waiting" | "live" | "fallback">("waiting");
+
+  const resolvePreviewPlace = useCallback((lat: number, lng: number) => {
+    const previousPoint = lastPlacePointRef.current;
+    if (
+      previousPoint &&
+      calculateDistanceMeters(previousPoint, [lat, lng]) < PLACE_REFRESH_DISTANCE_METERS
+    ) {
+      return;
+    }
+
+    lastPlacePointRef.current = [lat, lng];
+    const requestId = placeRequestIdRef.current + 1;
+    placeRequestIdRef.current = requestId;
+
+    void resolvePlaceInfo(lat, lng).then((nextPlaceInfo) => {
+      if (placeRequestIdRef.current === requestId) {
+        setPlaceInfo(nextPlaceInfo);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (!mapboxToken || !mapContainerRef.current || mapRef.current) {
       if (!mapboxToken) {
-        setMessage(fallback);
+        setPreviewState("fallback");
       }
       return;
     }
@@ -60,28 +86,44 @@ export function HomeLiveMapPreview({
         .addTo(map);
 
       if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            const center: [number, number] = [
-              position.coords.longitude,
-              position.coords.latitude
-            ];
-            markerRef.current?.setLngLat(center);
-            updatePreviewLayers(map, center);
-            map.easeTo({ center, zoom: 15.4, duration: 900, essential: true });
-            setMessage(status);
-          },
-          () => {
-            setMessage(fallback);
-          },
-          { enableHighAccuracy: true, maximumAge: 10_000, timeout: 8000 }
+        const handlePosition = (position: GeolocationPosition) => {
+          const center: [number, number] = [
+            position.coords.longitude,
+            position.coords.latitude
+          ];
+          markerRef.current?.setLngLat(center);
+          updatePreviewLayers(map, center);
+          map.easeTo({ center, zoom: 15.4, duration: 900, essential: true });
+          resolvePreviewPlace(position.coords.latitude, position.coords.longitude);
+          setPreviewState("live");
+        };
+
+        const handleLocationError = () => {
+          setPreviewState("fallback");
+        };
+
+        const options: PositionOptions = {
+          enableHighAccuracy: true,
+          maximumAge: 10_000,
+          timeout: 8000
+        };
+
+        navigator.geolocation.getCurrentPosition(handlePosition, handleLocationError, options);
+        watchIdRef.current = navigator.geolocation.watchPosition(
+          handlePosition,
+          handleLocationError,
+          options
         );
       } else {
-        setMessage(fallback);
+        setPreviewState("fallback");
       }
     });
 
     return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
       markerRef.current?.remove();
       markerRef.current = null;
       map.remove();
@@ -98,6 +140,9 @@ export function HomeLiveMapPreview({
     }
   }, [language]);
 
+  const message = previewState === "fallback" ? fallback : status;
+  const placeLabel = placeInfo ? formatPlaceLabel(placeInfo, language) : place;
+
   return (
     <div className="relative min-h-[460px] overflow-hidden rounded-lg border border-white/10 bg-[#07101a] shadow-hud">
       <div ref={mapContainerRef} className="absolute inset-0" />
@@ -106,10 +151,26 @@ export function HomeLiveMapPreview({
         <div className="text-[10px] font-black uppercase tracking-[0.22em] text-teal-200">
           {message}
         </div>
-        <div className="mt-1 truncate text-sm font-bold text-white">{place}</div>
+        <div className="mt-1 truncate text-sm font-bold text-white">{placeLabel}</div>
       </div>
     </div>
   );
+}
+
+function calculateDistanceMeters(from: [number, number], to: [number, number]) {
+  const earthRadiusMeters = 6_371_000;
+  const fromLat = toRadians(from[0]);
+  const toLat = toRadians(to[0]);
+  const dLat = toRadians(to[0] - from[0]);
+  const dLng = toRadians(to[1] - from[1]);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(fromLat) * Math.cos(toLat) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
 }
 
 function addPreviewLayers(map: mapboxgl.Map, center: [number, number]) {

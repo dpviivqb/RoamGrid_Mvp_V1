@@ -19,7 +19,13 @@ import type {
 } from "@/lib/types";
 
 export type SupabaseSaveResult =
-  | { ok: true; syncedAt: string; syncMode: "anonymous" | "authenticated"; userId?: string }
+  | {
+      ok: true;
+      syncedAt: string;
+      syncMode: "anonymous" | "authenticated";
+      userId?: string;
+      mapSnapshotStoragePath?: string;
+    }
   | { ok: false; error: string };
 
 export type SupabaseDataResult<T> =
@@ -28,10 +34,12 @@ export type SupabaseDataResult<T> =
 
 let browserClient: SupabaseClient | null | undefined;
 const HISTORY_PAGE_SIZE = 100;
+const SNAPSHOT_BUCKET = "exploration-snapshots";
+const SNAPSHOT_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const HISTORY_LIST_SELECT =
-  "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,map_snapshot_data_url,map_snapshot_version,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
+  "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,map_snapshot_data_url,map_snapshot_storage_path,map_snapshot_version,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
 const HISTORY_DETAIL_SELECT =
-  "id,anonymous_id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,admin_level,admin_source,admin_area_m2,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,map_snapshot_data_url,map_snapshot_version,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
+  "id,anonymous_id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,admin_area_display_name,admin_level,admin_source,admin_area_m2,place_parent_label_en,place_parent_label_zh,place_full_label_en,place_full_label_zh,map_snapshot_data_url,map_snapshot_storage_path,map_snapshot_version,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
 const LEGACY_HISTORY_LIST_SELECT =
   "id,user_id,started_at,ended_at,city_name,admin_area_id,admin_area_name,total_grid_count,distance_meters,discovered_grid_count,exploration_percentage";
 const LEGACY_HISTORY_DETAIL_SELECT =
@@ -94,7 +102,20 @@ export async function saveResultToSupabase(
   const authUser = await getCurrentAuthUser();
   const userId = authUser?.id;
   const syncMode = userId ? "authenticated" : "anonymous";
-  const sessionError = await saveSession(supabase, result, syncableGridIds.length, userId);
+  const snapshotUpload = userId
+    ? await uploadSnapshotToStorage(supabase, userId, result)
+    : { ok: true as const, path: undefined };
+  if (!snapshotUpload.ok) {
+    return { ok: false, error: snapshotUpload.error };
+  }
+
+  const sessionError = await saveSession(
+    supabase,
+    result,
+    syncableGridIds.length,
+    userId,
+    snapshotUpload.path
+  );
   if (sessionError && !isDuplicateRowError(sessionError)) {
     return { ok: false, error: formatSupabaseError("Failed to save session", sessionError) };
   }
@@ -116,7 +137,13 @@ export async function saveResultToSupabase(
     return { ok: false, error: formatSupabaseError("Failed to save discovered grids", gridsError) };
   }
 
-  return { ok: true, syncedAt: new Date().toISOString(), syncMode, userId };
+  return {
+    ok: true,
+    syncedAt: new Date().toISOString(),
+    syncMode,
+    userId,
+    mapSnapshotStoragePath: snapshotUpload.path
+  };
 }
 
 export async function syncLocalAdminGridHistoryToSupabase(): Promise<SupabaseDataResult<number>> {
@@ -223,13 +250,28 @@ export async function syncLocalExplorationHistoryToSupabase(): Promise<SupabaseD
       }
 
       resultForSync.supabaseSyncedAt = syncResult.syncedAt;
+      resultForSync.mapSnapshotStoragePath = syncResult.mapSnapshotStoragePath;
       syncedCount += 1;
     } else {
-      const updateResult = await updateRemoteSessionMetadata(supabase, authUser.id, resultForSync);
-      if (updateResult) {
-        return { ok: false, error: formatSupabaseError("Failed to update remote history", updateResult) };
+      const snapshotUpload = await uploadSnapshotToStorage(supabase, authUser.id, resultForSync);
+      if (!snapshotUpload.ok) {
+        return { ok: false, error: snapshotUpload.error };
       }
 
+      const updateResult = await updateRemoteSessionMetadata(
+        supabase,
+        authUser.id,
+        resultForSync,
+        snapshotUpload.path
+      );
+      if (updateResult) {
+        return {
+          ok: false,
+          error: formatSupabaseError("Failed to update remote history", updateResult)
+        };
+      }
+
+      resultForSync.mapSnapshotStoragePath = snapshotUpload.path;
       resultForSync.supabaseSyncedAt = new Date().toISOString();
     }
 
@@ -298,9 +340,11 @@ export async function getRemoteExplorationHistoryList(): Promise<
     };
   }
 
+  const summaries = rowsResult.data.map((session) => buildHistorySummaryFromSession(session, "remote"));
+
   return {
     ok: true,
-    data: rowsResult.data.map((session) => buildHistorySummaryFromSession(session, "remote"))
+    data: await attachSignedSnapshotUrls(supabase, summaries)
   };
 }
 
@@ -375,10 +419,14 @@ export async function getRemoteExplorationSession(
     .map((grid) => grid.grid_id)
     .filter(isGlobalGridId);
 
+  const [summary] = await attachSignedSnapshotUrls(supabase, [
+    buildHistorySummaryFromSession(sessionResult.data, "remote")
+  ]);
+
   return {
     ok: true,
     data: {
-      ...buildHistorySummaryFromSession(sessionResult.data, "remote"),
+      ...summary,
       points,
       discoveredGridIds: Array.from(new Set(gridIds))
     }
@@ -396,6 +444,21 @@ export async function deleteRemoteExplorationSession(
   const authUser = await getCurrentAuthUser();
   if (!authUser) {
     return { ok: false, error: "Sign in to delete history.", reason: "not_authenticated" };
+  }
+
+  const snapshotPath = await getRemoteSnapshotStoragePath(supabase, authUser.id, sessionId);
+  if (!snapshotPath.ok) {
+    return { ok: false, error: formatSupabaseError("Failed to load snapshot metadata", snapshotPath.error) };
+  }
+
+  if (snapshotPath.data) {
+    const { error: storageError } = await supabase.storage
+      .from(SNAPSHOT_BUCKET)
+      .remove([snapshotPath.data]);
+
+    if (storageError) {
+      return { ok: false, error: formatStorageError("Failed to delete map snapshot", storageError) };
+    }
   }
 
   const gridsResult = await supabase
@@ -435,7 +498,8 @@ async function saveSession(
   supabase: SupabaseClient,
   result: ExplorationResult,
   discoveredGridCount: number,
-  userId: string | undefined
+  userId: string | undefined,
+  snapshotStoragePath: string | undefined
 ) {
   const hierarchy = buildResultPlaceHierarchy(result);
   const baseRow = {
@@ -454,7 +518,8 @@ async function saveSession(
     distance_meters: result.distanceMeters,
     discovered_grid_count: discoveredGridCount,
     exploration_percentage: result.explorationPercentage,
-    map_snapshot_data_url: result.mapSnapshotDataUrl,
+    map_snapshot_data_url: null,
+    map_snapshot_storage_path: snapshotStoragePath,
     map_snapshot_version: result.mapSnapshotVersion
   };
   const { error } = await supabase.from("exploration_sessions").insert({
@@ -467,8 +532,9 @@ async function saveSession(
   });
 
   if (error && isMissingColumnError(error)) {
-    const { map_snapshot_data_url, map_snapshot_version, ...legacyRow } = baseRow;
+    const { map_snapshot_data_url, map_snapshot_storage_path, map_snapshot_version, ...legacyRow } = baseRow;
     void map_snapshot_data_url;
+    void map_snapshot_storage_path;
     void map_snapshot_version;
     const legacyResult = await supabase.from("exploration_sessions").insert(legacyRow);
     return legacyResult.error;
@@ -480,7 +546,8 @@ async function saveSession(
 async function updateRemoteSessionMetadata(
   supabase: SupabaseClient,
   userId: string,
-  result: ExplorationResult
+  result: ExplorationResult,
+  snapshotStoragePath: string | undefined
 ) {
   const hierarchy = buildResultPlaceHierarchy(result);
   const baseRow = {
@@ -495,7 +562,8 @@ async function updateRemoteSessionMetadata(
     place_parent_label_zh: hierarchy.parentPath.zh,
     place_full_label_en: hierarchy.fullPath.en,
     place_full_label_zh: hierarchy.fullPath.zh,
-    map_snapshot_data_url: result.mapSnapshotDataUrl,
+    map_snapshot_data_url: snapshotStoragePath ? null : undefined,
+    map_snapshot_storage_path: snapshotStoragePath,
     map_snapshot_version: result.mapSnapshotVersion,
     total_grid_count: result.totalGridCount ?? result.adminArea?.totalGridCount,
     distance_meters: result.distanceMeters,
@@ -510,13 +578,14 @@ async function updateRemoteSessionMetadata(
     .eq("id", result.id);
 
   if (error && isMissingColumnError(error)) {
-    const { admin_area_display_name, place_parent_label_en, place_parent_label_zh, place_full_label_en, place_full_label_zh, map_snapshot_data_url, map_snapshot_version, ...legacyRow } = baseRow;
+    const { admin_area_display_name, place_parent_label_en, place_parent_label_zh, place_full_label_en, place_full_label_zh, map_snapshot_data_url, map_snapshot_storage_path, map_snapshot_version, ...legacyRow } = baseRow;
     void admin_area_display_name;
     void place_parent_label_en;
     void place_parent_label_zh;
     void place_full_label_en;
     void place_full_label_zh;
     void map_snapshot_data_url;
+    void map_snapshot_storage_path;
     void map_snapshot_version;
     const legacyResult = await supabase
       .from("exploration_sessions")
@@ -527,6 +596,115 @@ async function updateRemoteSessionMetadata(
   }
 
   return error;
+}
+
+async function uploadSnapshotToStorage(
+  supabase: SupabaseClient,
+  userId: string,
+  result: ExplorationResult
+): Promise<{ ok: true; path?: string } | { ok: false; error: string }> {
+  if (!result.mapSnapshotDataUrl) {
+    return { ok: true, path: result.mapSnapshotStoragePath };
+  }
+
+  const path = buildSnapshotStoragePath(userId, result.id);
+
+  try {
+    const blob = await dataUrlToBlob(result.mapSnapshotDataUrl);
+    const { error } = await supabase.storage.from(SNAPSHOT_BUCKET).upload(path, blob, {
+      cacheControl: "31536000",
+      contentType: "image/png",
+      upsert: true
+    });
+
+    if (error) {
+      return { ok: false, error: formatStorageError("Failed to upload map snapshot", error) };
+    }
+  } catch (error) {
+    return { ok: false, error: formatStorageError("Failed to prepare map snapshot", error) };
+  }
+
+  return { ok: true, path };
+}
+
+async function attachSignedSnapshotUrls(
+  supabase: SupabaseClient,
+  summaries: HistorySummary[]
+) {
+  const paths = Array.from(
+    new Set(
+      summaries
+        .map((summary) => summary.mapSnapshotStoragePath)
+        .filter((path): path is string => Boolean(path))
+    )
+  );
+
+  if (paths.length === 0) {
+    return summaries;
+  }
+
+  const { data, error } = await supabase.storage
+    .from(SNAPSHOT_BUCKET)
+    .createSignedUrls(paths, SNAPSHOT_SIGNED_URL_TTL_SECONDS);
+
+  if (error) {
+    return summaries;
+  }
+
+  const signedUrlByPath = new Map<string, string>();
+  (data ?? []).forEach((entry) => {
+    const signedEntry = entry as { path?: string; signedUrl?: string; signedURL?: string };
+    const signedUrl = signedEntry.signedUrl ?? signedEntry.signedURL;
+    if (signedEntry.path && signedUrl) {
+      signedUrlByPath.set(signedEntry.path, signedUrl);
+    }
+  });
+
+  return summaries.map((summary) => ({
+    ...summary,
+    mapSnapshotPreviewUrl: summary.mapSnapshotStoragePath
+      ? signedUrlByPath.get(summary.mapSnapshotStoragePath) ?? summary.mapSnapshotPreviewUrl
+      : summary.mapSnapshotPreviewUrl
+  }));
+}
+
+async function getRemoteSnapshotStoragePath(
+  supabase: SupabaseClient,
+  userId: string,
+  sessionId: string
+): Promise<{ ok: true; data?: string } | { ok: false; error: PostgrestError }> {
+  const { data, error } = await supabase
+    .from("exploration_sessions")
+    .select("map_snapshot_storage_path")
+    .eq("user_id", userId)
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingColumnError(error)) {
+      return { ok: true, data: undefined };
+    }
+
+    return { ok: false, error };
+  }
+
+  return {
+    ok: true,
+    data: (data as { map_snapshot_storage_path?: string | null } | null)?.map_snapshot_storage_path ?? undefined
+  };
+}
+
+function buildSnapshotStoragePath(userId: string, sessionId: string) {
+  return `${userId}/${sessionId}.png`;
+}
+
+async function dataUrlToBlob(dataUrl: string) {
+  const response = await fetch(dataUrl);
+  if (!response.ok) {
+    throw new Error(`Snapshot fetch failed with status ${response.status}`);
+  }
+
+  return response.blob();
 }
 
 async function savePoints(
@@ -689,6 +867,7 @@ function buildHistorySummaryFromSession(
     explorationPercentage: session.exploration_percentage,
     totalGridCount: session.total_grid_count ?? undefined,
     mapSnapshotDataUrl: session.map_snapshot_data_url ?? undefined,
+    mapSnapshotStoragePath: session.map_snapshot_storage_path ?? undefined,
     mapSnapshotVersion: session.map_snapshot_version ?? undefined
   };
 }
@@ -736,6 +915,18 @@ function formatSupabaseError(label: string, error: PostgrestError) {
   return [label, error.message, error.code, error.details, error.hint].filter(Boolean).join(": ");
 }
 
+function formatStorageError(label: string, error: unknown) {
+  if (error instanceof Error) {
+    return `${label}: ${error.message}`;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return `${label}: ${String((error as { message?: unknown }).message)}`;
+  }
+
+  return label;
+}
+
 function toAuthUser(user: { id: string; email?: string }) {
   return {
     id: user.id,
@@ -765,6 +956,7 @@ type SessionHistoryRow = {
   place_full_label_en?: string | null;
   place_full_label_zh?: string | null;
   map_snapshot_data_url?: string | null;
+  map_snapshot_storage_path?: string | null;
   map_snapshot_version?: number | null;
   total_grid_count: number | null;
   distance_meters: number;

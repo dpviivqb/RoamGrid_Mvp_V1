@@ -91,6 +91,7 @@ export function historySummaryFromResult(
     explorationPercentage: result.explorationPercentage,
     totalGridCount: result.totalGridCount ?? result.adminArea?.totalGridCount,
     mapSnapshotDataUrl: result.mapSnapshotDataUrl,
+    mapSnapshotStoragePath: result.mapSnapshotStoragePath,
     mapSnapshotVersion: result.mapSnapshotVersion
   };
 }
@@ -124,6 +125,8 @@ export function mergeHistorySummaries(summaries: HistorySummary[]) {
       ...summary,
       source: mergeSources(existing.source, summary.source),
       mapSnapshotDataUrl: snapshotSource?.mapSnapshotDataUrl,
+      mapSnapshotStoragePath: summary.mapSnapshotStoragePath ?? existing.mapSnapshotStoragePath,
+      mapSnapshotPreviewUrl: summary.mapSnapshotPreviewUrl ?? existing.mapSnapshotPreviewUrl,
       mapSnapshotVersion: snapshotSource?.mapSnapshotVersion
     });
   });
@@ -143,6 +146,9 @@ export function mergeHistoryDetails(
       ...localDetail,
       source: "local_remote" as const,
       userId: remoteDetail.userId ?? localDetail.userId,
+      mapSnapshotDataUrl: localDetail.mapSnapshotDataUrl ?? remoteDetail.mapSnapshotDataUrl,
+      mapSnapshotStoragePath: remoteDetail.mapSnapshotStoragePath ?? localDetail.mapSnapshotStoragePath,
+      mapSnapshotPreviewUrl: remoteDetail.mapSnapshotPreviewUrl ?? localDetail.mapSnapshotPreviewUrl,
       blockCount: Math.max(localDetail.blockCount, remoteDetail.blockCount),
       discoveredGridIds:
         localDetail.discoveredGridIds.length > 0

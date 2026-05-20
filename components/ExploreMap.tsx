@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import mapboxgl from "mapbox-gl";
 import { AccountMenu } from "@/components/AccountMenu";
@@ -626,6 +626,7 @@ export function ExploreMap() {
     map.on("error", (event) => {
       console.error("Mapbox error", event.error);
     });
+    map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "bottom-right");
 
     const pauseFollowingForManualCamera = () => {
       if (programmaticCameraMoveRef.current) {
@@ -1003,6 +1004,7 @@ export function ExploreMap() {
           ...result,
           userId: syncResult.userId,
           syncMode: syncResult.syncMode,
+          mapSnapshotStoragePath: syncResult.mapSnapshotStoragePath,
           supabaseSyncedAt: syncResult.syncedAt
         }
       : { ...result, supabaseSyncError: syncResult.error };
@@ -1086,49 +1088,52 @@ export function ExploreMap() {
 
       <div className="absolute right-3 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-2 sm:right-5">
         <CameraToolButton
-          label={language === "zh" ? "回到我" : "Me"}
-          sublabel={
+          label={
             language === "zh"
               ? viewScope === "user" && isFollowingUser
-                ? "定位"
-                : "返回"
+                ? "当前位置已锁定"
+                : "回到我的位置"
               : viewScope === "user" && isFollowingUser
-                ? "Lock"
-                : "Return"
+                ? "Position locked"
+                : "Return to me"
           }
           active={viewScope !== "user" || !isFollowingUser}
           disabled={!session?.points.length}
           onClick={() => moveToUserView("fly")}
-        />
+        >
+          <LocateIcon />
+        </CameraToolButton>
         <CameraToolButton
-          label={language === "zh" ? "区界" : "Area"}
-          sublabel={
+          label={
             language === "zh"
               ? viewScope === "adminArea"
-                ? "回到我"
-                : "全区"
+                ? "回到当前位置视角"
+                : "查看整个行政区"
               : viewScope === "adminArea"
-                ? "Me"
-                : "Full"
+                ? "Return to user view"
+                : "View full area"
           }
           active={viewScope === "adminArea"}
           disabled={!adminArea}
           onClick={toggleAdminAreaView}
-        />
+        >
+          <BoundaryIcon />
+        </CameraToolButton>
         <CameraToolButton
-          label={perspective === "bird" ? "2D" : "3D"}
-          sublabel={
+          label={
             language === "zh"
               ? perspective === "bird"
-                ? "平面"
-                : "鸟瞰"
+                ? "切换到平面图"
+                : "切换到鸟瞰图"
               : perspective === "bird"
-                ? "Flat"
-                : "Tilt"
+                ? "Switch to flat map"
+                : "Switch to bird view"
           }
           active={perspective === "top"}
           onClick={() => applyPerspective(perspective === "bird" ? "top" : "bird")}
-        />
+        >
+          {perspective === "bird" ? <FlatMapIcon /> : <CubeIcon />}
+        </CameraToolButton>
       </div>
 
       {error && !mapboxToken ? (
@@ -1206,40 +1211,106 @@ export function ExploreMap() {
 
 function CameraToolButton({
   label,
-  sublabel,
   active = false,
   disabled = false,
-  onClick
+  onClick,
+  children
 }: {
   label: string;
-  sublabel: string;
   active?: boolean;
   disabled?: boolean;
   onClick: () => void;
+  children: ReactNode;
 }) {
   return (
     <button
       type="button"
       aria-pressed={active}
+      aria-label={label}
+      title={label}
       disabled={disabled}
       onClick={onClick}
       className={
         active
-          ? "flex h-[58px] w-[64px] flex-col items-center justify-center rounded-md border border-teal-100/40 bg-teal-300 px-2 text-center font-black text-slate-950 shadow-glow transition disabled:cursor-not-allowed disabled:opacity-45"
-          : "flex h-[58px] w-[64px] flex-col items-center justify-center rounded-md border border-white/10 bg-black/46 px-2 text-center font-black text-slate-100 shadow-hud backdrop-blur-md transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+          ? "grid h-11 w-11 place-items-center rounded-md border border-teal-100/50 bg-teal-300 text-slate-950 shadow-glow transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-45"
+          : "grid h-11 w-11 place-items-center rounded-md border border-white/10 bg-black/46 text-slate-100 shadow-hud backdrop-blur-md transition hover:border-teal-100/30 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
       }
     >
-      <span className="max-w-full truncate text-xs leading-none">{label}</span>
-      <span
-        className={
-          active
-            ? "mt-1 max-w-full truncate text-[9px] font-bold uppercase leading-none text-slate-800"
-            : "mt-1 max-w-full truncate text-[9px] font-bold uppercase leading-none text-slate-400"
-        }
-      >
-        {sublabel}
-      </span>
+      {children}
     </button>
+  );
+}
+
+function LocateIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M12 4v3M12 17v3M4 12h3M17 12h3"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="1.7" fill="currentColor" />
+    </svg>
+  );
+}
+
+function BoundaryIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M6.5 5.5h7v4h4v8h-7v-4h-4z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 8.5h3M13 12h3M8 16h3"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        opacity="0.75"
+      />
+    </svg>
+  );
+}
+
+function FlatMapIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M4.5 7.5 9 5.5l6 2.4 4.5-2v10.6l-4.5 2-6-2.4-4.5 2z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 5.5v10.6M15 7.9v10.6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function CubeIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="m12 3.8 7 4v8.4l-7 4-7-4V7.8z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m5 7.8 7 4 7-4M12 11.8v8.4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

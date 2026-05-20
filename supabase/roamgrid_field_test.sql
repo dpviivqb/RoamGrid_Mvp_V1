@@ -16,6 +16,7 @@ create table if not exists public.exploration_sessions (
   place_full_label_en text,
   place_full_label_zh text,
   map_snapshot_data_url text,
+  map_snapshot_storage_path text,
   map_snapshot_version integer,
   total_grid_count integer,
   distance_meters double precision not null default 0,
@@ -54,6 +55,7 @@ alter table public.exploration_sessions add column if not exists place_parent_la
 alter table public.exploration_sessions add column if not exists place_full_label_en text;
 alter table public.exploration_sessions add column if not exists place_full_label_zh text;
 alter table public.exploration_sessions add column if not exists map_snapshot_data_url text;
+alter table public.exploration_sessions add column if not exists map_snapshot_storage_path text;
 alter table public.exploration_sessions add column if not exists map_snapshot_version integer;
 alter table public.exploration_sessions add column if not exists total_grid_count integer;
 
@@ -174,3 +176,54 @@ on public.discovered_grids
 for delete
 to authenticated
 using ((select auth.uid()) = user_id);
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('exploration-snapshots', 'exploration-snapshots', false, 10485760, array['image/png'])
+on conflict (id) do update
+set public = false,
+    file_size_limit = 10485760,
+    allowed_mime_types = array['image/png'];
+
+drop policy if exists "authenticated can read own exploration snapshots" on storage.objects;
+create policy "authenticated can read own exploration snapshots"
+on storage.objects
+for select
+to authenticated
+using (
+  bucket_id = 'exploration-snapshots'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
+
+drop policy if exists "authenticated can insert own exploration snapshots" on storage.objects;
+create policy "authenticated can insert own exploration snapshots"
+on storage.objects
+for insert
+to authenticated
+with check (
+  bucket_id = 'exploration-snapshots'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
+
+drop policy if exists "authenticated can update own exploration snapshots" on storage.objects;
+create policy "authenticated can update own exploration snapshots"
+on storage.objects
+for update
+to authenticated
+using (
+  bucket_id = 'exploration-snapshots'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+)
+with check (
+  bucket_id = 'exploration-snapshots'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
+
+drop policy if exists "authenticated can delete own exploration snapshots" on storage.objects;
+create policy "authenticated can delete own exploration snapshots"
+on storage.objects
+for delete
+to authenticated
+using (
+  bucket_id = 'exploration-snapshots'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
